@@ -81,21 +81,6 @@ func HandleKey(key string, state State, ctx KeyContext) KeyResult {
 	case "b":
 		kr.RunBuild = true
 		return kr
-
-	case "f":
-		kr.Prompt = &PromptReq{
-			Mode:         types.PromptFilter,
-			DefaultValue: state.Filter,
-		}
-		return kr
-
-	case "esc":
-		if state.Filter != "" {
-			kr.State.Filter = ""
-			kr.State.PreviewSel = 0
-			kr.Refresh = types.RefreshAll
-		}
-		return kr
 	}
 
 	return kr

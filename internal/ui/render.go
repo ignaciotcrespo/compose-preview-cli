@@ -22,6 +22,23 @@ func visibleRange(selected, count, maxLines, linesPerItem int) (int, int) {
 	return tui.VisibleRange(selected, count, maxLines, linesPerItem)
 }
 
+// filteredCountForModule returns how many previews in a module match the current filter.
+func (m Model) filteredCountForModule(mod scanner.Module) int {
+	if m.state.Filter == "" {
+		return len(mod.Previews)
+	}
+	filter := strings.ToLower(m.state.Filter)
+	count := 0
+	for _, p := range mod.Previews {
+		name := strings.ToLower(p.FunctionName)
+		pname := strings.ToLower(p.PreviewName)
+		if strings.Contains(name, filter) || strings.Contains(pname, filter) {
+			count++
+		}
+	}
+	return count
+}
+
 func (m Model) renderModulesContent(maxLines int) panelContent {
 	total := len(m.modules)
 	if total == 0 {
@@ -48,9 +65,10 @@ func (m Model) renderModulesContent(maxLines int) panelContent {
 				style = dimSelectedItemStyle
 			}
 		}
-		count := fmt.Sprintf(" (%d)", len(mod.Previews))
+		filteredCount := m.filteredCountForModule(mod)
+		count := fmt.Sprintf(" (%d)", filteredCount)
 		countStyle := statusBarStyle
-		if len(mod.Previews) > 0 {
+		if filteredCount > 0 {
 			countStyle = moduleCountStyle
 		}
 		b.WriteString(cursor + style.Render(mod.Name) + countStyle.Render(count) + "\n")
@@ -146,14 +164,11 @@ func (m Model) renderHelp() string {
 	if m.prompt.Active() {
 		return helpStyle.Render(" enter confirm · esc cancel")
 	}
-
-	parts := []string{"enter run"}
-	parts = append(parts, "b build")
-	parts = append(parts, "f filter")
-	if m.state.Filter != "" {
-		parts = append(parts, "esc clear filter")
+	if m.searchActive {
+		return helpStyle.Render(" type to filter · tab panels · esc clear · enter confirm")
 	}
-	parts = append(parts, "q quit")
+
+	parts := []string{"enter run", "b build", "/ filter", "q quit"}
 	return helpStyle.Render(" " + strings.Join(parts, " · "))
 }
 

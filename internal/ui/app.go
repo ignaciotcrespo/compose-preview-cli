@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/adb"
@@ -64,6 +65,10 @@ type Model struct {
 	installTasks  []string // cached install tasks (e.g. installDevDebug, installAcceptDebug)
 	lastBuildTask string   // remember last selected task
 
+	// Search bar (always visible at top)
+	searchInput  textinput.Model
+	searchActive bool // true when search bar is focused
+
 	// Prompt
 	prompt prompt.Prompt
 
@@ -110,6 +115,12 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	// Check if sources are newer than the APK
 	needsBuild, buildWarning := gradle.NeedsBuild(appModulePath, projectRoot)
 
+	// Search input
+	si := textinput.New()
+	si.Prompt = ""
+	si.Placeholder = "type to filter previews..."
+	si.CharLimit = 100
+
 	return Model{
 		state:         controller.NewState(),
 		scanResult:    result,
@@ -121,6 +132,7 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 		deviceStatus:  deviceStatus,
 		needsBuild:    needsBuild,
 		buildWarning:  buildWarning,
+		searchInput:   si,
 		panelRegions:  make(map[types.PanelID]panel.Region),
 	}
 }
@@ -164,7 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case tea.KeyMsg:
-		// Prompt handling takes priority
+		// Prompt handling takes priority (build variant picker, etc.)
 		if m.prompt.Active() {
 			result, handled, cmd := m.prompt.HandleKey(msg)
 			if handled {
@@ -177,12 +189,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Search bar is active — route keys to textinput
+		if m.searchActive {
+			switch msg.String() {
+			case "tab":
+				// Exit search, move to panels
+				m.searchActive = false
+				m.searchInput.Blur()
+				return m, nil
+			case "esc":
+				// Clear search and exit
+				m.searchActive = false
+				m.searchInput.SetValue("")
+				m.searchInput.Blur()
+				m.state.Filter = ""
+				m.state.PreviewSel = 0
+				return m, nil
+			case "enter":
+				// Confirm filter and move to panels
+				m.searchActive = false
+				m.searchInput.Blur()
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				// Forward to textinput
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				// Live filter: update state from input value
+				m.state.Filter = m.searchInput.Value()
+				m.state.PreviewSel = 0
+				return m, cmd
+			}
+		}
+
+		// Normal mode — controller handles keys
+		key := msg.String()
+
+		// "/" activates search bar
+		if key == "/" {
+			m.searchActive = true
+			return m, m.searchInput.Focus()
+		}
+
 		keyCtx := controller.KeyContext{
 			ModuleCount:  len(m.modules),
 			PreviewCount: len(m.filteredPreviews()),
 			TabFlow:      []types.PanelID{types.PanelModules, types.PanelPreviews},
 		}
-		kr := controller.HandleKey(msg.String(), m.state, keyCtx)
+		kr := controller.HandleKey(key, m.state, keyCtx)
 		m.state = kr.State
 
 		if kr.Quit {
@@ -205,6 +260,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startBuild()
 		}
 		return m, nil
+	}
+
+	// Forward non-key messages to search input (cursor blink)
+	if m.searchActive {
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		return m, cmd
 	}
 
 	// Forward non-key messages to prompt

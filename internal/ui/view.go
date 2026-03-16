@@ -14,15 +14,24 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
+	// Search bar (always visible)
+	searchLabel := statusBarStyle.Render(" / ")
+	var searchBar string
+	if m.searchActive {
+		searchBar = searchLabel + inputLabelStyle.Render("Filter: ") + m.searchInput.View()
+	} else if m.state.Filter != "" {
+		searchBar = searchLabel + inputLabelStyle.Render("Filter: ") + detailValueStyle.Render(m.state.Filter) +
+			statusBarStyle.Render("  (/ to edit, esc to clear)")
+	} else {
+		searchBar = searchLabel + statusBarStyle.Render("Press / to filter previews")
+	}
+
 	// Header
 	title := lipgloss.NewStyle().Bold(true).Foreground(selectedAccent).Render(" Compose Preview Browser")
 	projectInfo := statusBarStyle.Render(" — " + m.scanResult.ProjectName)
 	deviceInfo := ""
 	if m.deviceStatus != "" {
 		deviceInfo = statusBarStyle.Render(" · ") + detailValueStyle.Render(m.deviceStatus)
-	}
-	if m.appId != "" {
-		deviceInfo += statusBarStyle.Render(" · ") + statusBarStyle.Render(m.appId)
 	}
 	header := title + projectInfo + deviceInfo
 
@@ -39,9 +48,9 @@ func (m Model) View() string {
 	}
 
 	// Calculate panel dimensions
-	detailH := 3 // FQN, File, Params
-	statusLines := 1
-	contentH := m.height - 4 - detailH - statusLines // 1 header + 2 detail borders + 1 help + 1 status
+	// Layout: header(1) + search(1) + panels(contentH+2) + details(detailH+2) + status(1) + help(1) = height
+	detailH := 3
+	contentH := m.height - detailH - 8
 
 	leftW := m.width / 4
 	rightW := m.width - leftW - 4 // -4 for borders
@@ -54,10 +63,8 @@ func (m Model) View() string {
 
 	// Previews panel
 	prevFocused := m.state.Focus == types.PanelPreviews
-	prevTitle := "Previews"
-	if m.state.Filter != "" {
-		prevTitle = fmt.Sprintf("Previews [%s]", m.state.Filter)
-	}
+	filtered := m.filteredPreviews()
+	prevTitle := fmt.Sprintf("Previews (%d)", len(filtered))
 	prevPC := m.renderPreviewsContent(contentH)
 	prevBox := panel.Box(2, prevTitle, prevPC.content, rightW, contentH, prevFocused,
 		panel.BoxOpts{Scroll: prevPC.scroll, Accent: panelAccent(prevFocused)})
@@ -77,6 +84,7 @@ func (m Model) View() string {
 	// Build layout
 	var parts []string
 	parts = append(parts, header)
+	parts = append(parts, searchBar)
 	parts = append(parts, topPanels)
 	parts = append(parts, detailBox)
 	if statusLine != "" {
