@@ -10,7 +10,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/scanner"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/panel"
-	"github.com/ignaciotcrespo/gitshelf/pkg/tui"
+	"github.com/ignaciotcrespo/tui-framework"
 )
 
 type panelContent struct {

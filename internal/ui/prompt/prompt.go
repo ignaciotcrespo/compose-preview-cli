@@ -6,7 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
-	"github.com/ignaciotcrespo/gitshelf/pkg/tui"
+	"github.com/ignaciotcrespo/tui-framework"
 )
 
 // Styles used by prompt rendering. Set these from the parent package.

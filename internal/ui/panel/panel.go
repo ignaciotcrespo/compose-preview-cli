@@ -4,7 +4,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
-	"github.com/ignaciotcrespo/gitshelf/pkg/tui"
+	"github.com/ignaciotcrespo/tui-framework"
 )
 
 // Region stores the screen coordinates of a panel for mouse hit-testing.
