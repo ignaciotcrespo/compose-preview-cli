@@ -4,17 +4,12 @@
     {
       "name": "Changes",
       "files": [
-        ".gitignore",
-        "cmd/compose-preview/main.go",
-        "LICENSE",
-        "build.sh",
-        "test.sh",
-        "CLAUDE.md",
-        "README.md",
-        ".github/workflows/release.yml",
-        ".github/workflows/test.yml",
         ".gitshelf/changelists.json",
-        ".goreleaser.yml"
+        "internal/gradle/gradle.go",
+        "internal/types/types.go",
+        "internal/ui/app.go",
+        "internal/ui/prompt/prompt.go",
+        "internal/ui/view.go"
       ]
     },
     {

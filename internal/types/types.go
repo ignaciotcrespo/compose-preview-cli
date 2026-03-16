@@ -25,8 +25,9 @@ const (
 type PromptMode = tui.PromptMode
 
 const (
-	PromptNone    PromptMode = iota
+	PromptNone         PromptMode = iota
 	PromptFilter
+	PromptBuildVariant // quick-select: which install task to run
 	PromptConfirm
 )
 

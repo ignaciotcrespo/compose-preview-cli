@@ -32,6 +32,8 @@ func (c composeLabeler) PromptLabel(mode types.PromptMode) string {
 	switch mode {
 	case types.PromptFilter:
 		return "Filter previews"
+	case types.PromptBuildVariant:
+		return "Build variant"
 	}
 	return ""
 }
@@ -59,6 +61,13 @@ func (p *Prompt) Start(mode types.PromptMode, defaultValue string) tea.Cmd {
 	p.ensureInit()
 	syncStyles()
 	return p.inner.Start(mode, defaultValue)
+}
+
+// StartWithOptions begins a prompt with quick-select options.
+func (p *Prompt) StartWithOptions(mode types.PromptMode, defaultValue string, names []string) tea.Cmd {
+	p.ensureInit()
+	syncStyles()
+	return p.inner.StartWithOptions(mode, defaultValue, names)
 }
 
 // StartConfirm begins a confirmation prompt.

@@ -54,10 +54,15 @@ type Model struct {
 	deviceStatus string
 	devices      []adb.Device
 
-	// Status
-	statusMsg string
-	errorMsg  string
-	building  bool
+	// Build status
+	statusMsg     string
+	errorMsg      string
+	building      bool
+	needsBuild    bool
+	buildWarning  string   // e.g. "sources changed since last build"
+	appModulePath string   // path to the app module (for APK staleness check)
+	installTasks  []string // cached install tasks (e.g. installDevDebug, installAcceptDebug)
+	lastBuildTask string   // remember last selected task
 
 	// Prompt
 	prompt prompt.Prompt
@@ -100,17 +105,23 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 
 	// Find applicationId from the app module (the one with applicationId, not just namespace).
 	// PreviewActivity lives in the app APK, so we always need the app's package.
-	appId := findAppApplicationId(result.Modules, projectRoot)
+	appId, appModulePath := findAppApplicationId(result.Modules, projectRoot)
+
+	// Check if sources are newer than the APK
+	needsBuild, buildWarning := gradle.NeedsBuild(appModulePath, projectRoot)
 
 	return Model{
-		state:        controller.NewState(),
-		scanResult:   result,
-		modules:      modules,
-		projectRoot:  projectRoot,
-		appId:        appId,
-		devices:      devices,
-		deviceStatus: deviceStatus,
-		panelRegions: make(map[types.PanelID]panel.Region),
+		state:         controller.NewState(),
+		scanResult:    result,
+		modules:       modules,
+		projectRoot:   projectRoot,
+		appId:         appId,
+		appModulePath: appModulePath,
+		devices:       devices,
+		deviceStatus:  deviceStatus,
+		needsBuild:    needsBuild,
+		buildWarning:  buildWarning,
+		panelRegions:  make(map[types.PanelID]panel.Region),
 	}
 }
 
@@ -133,7 +144,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = fmt.Sprintf("Build complete: %s", msg.module)
 			m.errorMsg = ""
+			m.needsBuild = false
+			m.buildWarning = ""
 		}
+		// Recheck staleness
+		m.needsBuild, m.buildWarning = gradle.NeedsBuild(m.appModulePath, m.projectRoot)
 		return m, nil
 
 	case adbLaunchMsg:
@@ -154,7 +169,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result, handled, cmd := m.prompt.HandleKey(msg)
 			if handled {
 				if result != nil {
-					m.handlePromptResult(result)
+					if followUpCmd := m.handlePromptResult(result); followUpCmd != nil {
+						return m, tea.Batch(cmd, followUpCmd)
+					}
 				}
 				return m, cmd
 			}
@@ -199,12 +216,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handlePromptResult(result *prompt.Result) {
+func (m *Model) handlePromptResult(result *prompt.Result) tea.Cmd {
 	switch result.Mode {
 	case types.PromptFilter:
 		m.state.Filter = result.Value
 		m.state.PreviewSel = 0
+	case types.PromptBuildVariant:
+		return m.runBuildTask(result.Value)
 	}
+	return nil
 }
 
 func (m *Model) launchPreview() tea.Cmd {
@@ -262,15 +282,14 @@ func (m *Model) launchPreview() tea.Cmd {
 }
 
 // findAppApplicationId looks for the applicationId across all modules.
-// It prefers an explicit applicationId over namespace, and prioritizes
-// app-like modules (composeApp, app) over library modules.
-func findAppApplicationId(modules []scanner.Module, projectRoot string) string {
+// Returns the applicationId and the module path.
+func findAppApplicationId(modules []scanner.Module, projectRoot string) (string, string) {
 	// Priority 1: Check well-known app module names
 	for _, name := range []string{":composeApp", ":app"} {
 		for _, mod := range modules {
 			if mod.Name == name {
 				if id := gradle.FindApplicationId(mod.Path); id != "" {
-					return id
+					return id, mod.Path
 				}
 			}
 		}
@@ -278,10 +297,10 @@ func findAppApplicationId(modules []scanner.Module, projectRoot string) string {
 	// Priority 2: Check all modules for any applicationId
 	for _, mod := range modules {
 		if id := gradle.FindApplicationId(mod.Path); id != "" {
-			return id
+			return id, mod.Path
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func (m *Model) startBuild() tea.Cmd {
@@ -289,11 +308,46 @@ func (m *Model) startBuild() tea.Cmd {
 		m.statusMsg = "Build already in progress..."
 		return nil
 	}
-	if m.state.ModuleSel >= len(m.modules) {
+
+	gradlew, err := gradle.FindGradlew(m.projectRoot)
+	if err != nil {
+		m.errorMsg = err.Error()
 		return nil
 	}
 
-	mod := m.modules[m.state.ModuleSel]
+	// Find the app module name for install tasks
+	appModuleName := ":composeApp"
+	for _, mod := range m.scanResult.Modules {
+		if mod.Path == m.appModulePath {
+			appModuleName = mod.Name
+			break
+		}
+	}
+
+	// Discover install tasks if not cached
+	if len(m.installTasks) == 0 {
+		m.statusMsg = "Querying build variants..."
+		m.errorMsg = ""
+		tasks := gradle.ListInstallTasks(gradlew, appModuleName)
+		m.installTasks = tasks
+		m.statusMsg = ""
+	}
+
+	// If only one task, run it directly
+	if len(m.installTasks) == 1 {
+		return m.runBuildTask(m.installTasks[0])
+	}
+
+	// If we used a task before, run it again directly
+	if m.lastBuildTask != "" {
+		return m.runBuildTask(m.lastBuildTask)
+	}
+
+	// Multiple tasks: show quick-select prompt
+	return m.prompt.StartWithOptions(types.PromptBuildVariant, "", m.installTasks)
+}
+
+func (m *Model) runBuildTask(task string) tea.Cmd {
 	gradlew, err := gradle.FindGradlew(m.projectRoot)
 	if err != nil {
 		m.errorMsg = err.Error()
@@ -301,13 +355,13 @@ func (m *Model) startBuild() tea.Cmd {
 	}
 
 	m.building = true
-	m.statusMsg = fmt.Sprintf("Building %s...", mod.Name)
+	m.lastBuildTask = task
+	m.statusMsg = fmt.Sprintf("Running %s...", task)
 	m.errorMsg = ""
 
-	moduleName := mod.Name
 	return func() tea.Msg {
-		_, err := gradle.InstallDebug(gradlew, moduleName)
-		return buildCompleteMsg{module: moduleName, err: err}
+		_, err := gradle.RunTask(gradlew, task)
+		return buildCompleteMsg{module: task, err: err}
 	}
 }
 

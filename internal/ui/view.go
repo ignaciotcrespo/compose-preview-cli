@@ -30,8 +30,12 @@ func (m Model) View() string {
 	statusLine := ""
 	if m.errorMsg != "" {
 		statusLine = errorStyle.Render(" ✗ " + m.errorMsg)
+	} else if m.building {
+		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(" ⏳ " + m.statusMsg)
 	} else if m.statusMsg != "" {
 		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("35")).Render(" ● " + m.statusMsg)
+	} else if m.needsBuild {
+		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(" ⚠ " + m.buildWarning + " — press 'b' to rebuild")
 	}
 
 	// Calculate panel dimensions
