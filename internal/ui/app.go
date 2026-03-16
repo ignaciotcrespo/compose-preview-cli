@@ -427,21 +427,92 @@ func (m *Model) runBuildTask(task string) tea.Cmd {
 	}
 }
 
+const headerLines = 2 // header + search bar above panels
+
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
 
-	// Adjust for header
-	mx, my := msg.X, msg.Y-1
+	// Adjust for lines above the panels
+	mx, my := msg.X, msg.Y-headerLines
 
+	// Find which panel was hit
+	var hitPanel types.PanelID = -1
 	for pid, region := range m.panelRegions {
 		if region.Contains(mx, my) {
-			if pid == types.PanelModules || pid == types.PanelPreviews {
-				m.state.Focus = pid
-			}
+			hitPanel = pid
 			break
 		}
 	}
+	if hitPanel < 0 {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.state.Focus = hitPanel
+		m.scrollPanel(hitPanel, -3)
+		return m, nil
+
+	case tea.MouseButtonWheelDown:
+		m.state.Focus = hitPanel
+		m.scrollPanel(hitPanel, 3)
+		return m, nil
+
+	case tea.MouseButtonLeft:
+		m.state.Focus = hitPanel
+		region := m.panelRegions[hitPanel]
+		contentRow := my - region.Y - 1 // -1 for top border
+		if contentRow >= 0 {
+			m.clickItem(hitPanel, contentRow)
+		}
+	}
 	return m, nil
+}
+
+// scrollPanel moves the cursor in the given panel by delta items.
+func (m *Model) scrollPanel(pid types.PanelID, delta int) {
+	switch pid {
+	case types.PanelModules:
+		m.state.ModuleSel = clamp(m.state.ModuleSel+delta, 0, max(0, len(m.modules)-1))
+		m.state.PreviewSel = 0
+	case types.PanelPreviews:
+		previews := m.filteredPreviews()
+		m.state.PreviewSel = clamp(m.state.PreviewSel+delta, 0, max(0, len(previews)-1))
+	}
+}
+
+// clickItem selects the item at the given content row within a panel.
+func (m *Model) clickItem(pid types.PanelID, row int) {
+	switch pid {
+	case types.PanelModules:
+		region := m.panelRegions[pid]
+		maxLines := region.H - 2 // subtract borders
+		start, _ := visibleRange(m.state.ModuleSel, len(m.modules), maxLines, 1)
+		idx := start + row
+		if idx >= 0 && idx < len(m.modules) {
+			m.state.ModuleSel = idx
+			m.state.PreviewSel = 0
+		}
+	case types.PanelPreviews:
+		previews := m.filteredPreviews()
+		region := m.panelRegions[pid]
+		maxLines := region.H - 2
+		start, _ := visibleRange(m.state.PreviewSel, len(previews), maxLines, 1)
+		idx := start + row
+		if idx >= 0 && idx < len(previews) {
+			m.state.PreviewSel = idx
+		}
+	}
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
