@@ -1,1 +1,3 @@
-.gitshelf/
+.idea/
+/compose-preview
+dist/

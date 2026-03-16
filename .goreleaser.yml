@@ -1,0 +1,56 @@
+version: 2
+
+# NOTE: Before releasing, ensure gitshelf has a tagged version on GitHub
+# and update go.mod to point to that version (remove the replace directive).
+# Example:
+#   go mod edit -dropreplace=github.com/ignaciotcrespo/gitshelf
+#   go mod edit -require=github.com/ignaciotcrespo/gitshelf@v0.x.x
+#   go mod tidy
+
+builds:
+  - main: ./cmd/compose-preview
+    binary: compose-preview
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: ['tar.gz']
+    format_overrides:
+      - goos: windows
+        formats: ['zip']
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+brews:
+  - repository:
+      owner: ignaciotcrespo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/ignaciotcrespo/compose-preview-cli
+    description: Terminal UI for browsing and running Jetpack Compose previews without Android Studio
+    license: MIT
+    skip_upload: auto
+    install: |
+      bin.install "compose-preview"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/compose-preview --version")
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'

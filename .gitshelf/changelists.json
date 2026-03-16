@@ -1,0 +1,25 @@
+{
+  "active": "Changes",
+  "changelists": [
+    {
+      "name": "Changes",
+      "files": [
+        ".gitignore",
+        "cmd/compose-preview/main.go",
+        "LICENSE",
+        "build.sh",
+        "test.sh",
+        "CLAUDE.md",
+        "README.md",
+        ".github/workflows/release.yml",
+        ".github/workflows/test.yml",
+        ".gitshelf/changelists.json",
+        ".goreleaser.yml"
+      ]
+    },
+    {
+      "name": "Unversioned Files",
+      "files": null
+    }
+  ]
+}

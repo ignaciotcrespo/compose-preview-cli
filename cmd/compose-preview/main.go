@@ -12,7 +12,15 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui"
 )
 
+// version is set by goreleaser via ldflags.
+var version = "dev"
+
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println("compose-preview", version)
+		return
+	}
+
 	// Determine project root
 	dir := "."
 	if len(os.Args) > 1 {
