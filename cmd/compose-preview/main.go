@@ -52,7 +52,7 @@ func main() {
 
 	// Launch TUI
 	model := ui.NewModel(result, root)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

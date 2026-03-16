@@ -137,6 +137,11 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	}
 }
 
+// scanCompleteMsg is sent when an async rescan finishes.
+type scanCompleteMsg struct {
+	result scanner.ScanResult
+}
+
 func (m Model) Init() tea.Cmd {
 	return nil
 }
@@ -146,6 +151,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+
+	case tea.FocusMsg:
+		// Terminal window gained focus — refresh data
+		return m, m.startRescan()
+
+	case scanCompleteMsg:
+		m.applyRescan(msg.result)
+		if m.needsBuild {
+			// Let the build warning show instead of the refresh message
+			m.statusMsg = ""
+		} else {
+			m.statusMsg = fmt.Sprintf("Refreshed: %d previews across %d modules", len(msg.result.AllPreviews), len(msg.result.Modules))
+		}
 		return m, nil
 
 	case buildCompleteMsg:
@@ -258,6 +277,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if kr.RunBuild {
 			return m, m.startBuild()
+		}
+		if kr.RunRefresh {
+			return m, m.startRescan()
 		}
 		return m, nil
 	}
@@ -515,4 +537,61 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// startRescan launches an async rescan of the project.
+func (m *Model) startRescan() tea.Cmd {
+	m.statusMsg = "Scanning..."
+	m.errorMsg = ""
+	root := m.projectRoot
+	return func() tea.Msg {
+		result := scanner.Scan(root)
+		return scanCompleteMsg{result: result}
+	}
+}
+
+// applyRescan updates the model with fresh scan results, preserving selection where possible.
+func (m *Model) applyRescan(result scanner.ScanResult) {
+	m.scanResult = result
+
+	// Rebuild module list (only modules with previews)
+	var modulesWithPreviews []scanner.Module
+	for _, mod := range result.Modules {
+		if len(mod.Previews) > 0 {
+			modulesWithPreviews = append(modulesWithPreviews, mod)
+		}
+	}
+	if len(modulesWithPreviews) > 0 {
+		m.modules = modulesWithPreviews
+	} else {
+		m.modules = result.Modules
+	}
+
+	// Clamp selections
+	if m.state.ModuleSel >= len(m.modules) {
+		m.state.ModuleSel = max(0, len(m.modules)-1)
+	}
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) {
+		m.state.PreviewSel = max(0, len(previews)-1)
+	}
+
+	// Refresh applicationId and build staleness
+	m.appId, m.appModulePath = findAppApplicationId(result.Modules, m.projectRoot)
+	m.needsBuild, m.buildWarning = gradle.NeedsBuild(m.appModulePath, m.projectRoot)
+
+	// Refresh devices
+	if adb.IsADBAvailable() {
+		if d, err := adb.DetectDevices(); err == nil && len(d) > 0 {
+			m.devices = d
+			if d[0].Model != "" {
+				m.deviceStatus = d[0].Model
+			} else {
+				m.deviceStatus = d[0].Serial
+			}
+		} else {
+			m.devices = nil
+			m.deviceStatus = "no device"
+		}
+	}
 }

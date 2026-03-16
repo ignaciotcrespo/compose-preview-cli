@@ -40,4 +40,5 @@ type KeyResult struct {
 	Quit      bool
 	RunOnDevice bool // trigger ADB preview launch
 	RunBuild    bool // trigger gradle build
+	RunRefresh  bool // trigger rescan
 }

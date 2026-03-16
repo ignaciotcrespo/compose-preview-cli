@@ -81,6 +81,10 @@ func HandleKey(key string, state State, ctx KeyContext) KeyResult {
 	case "b":
 		kr.RunBuild = true
 		return kr
+
+	case "R":
+		kr.RunRefresh = true
+		return kr
 	}
 
 	return kr
