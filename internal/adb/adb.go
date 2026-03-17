@@ -143,6 +143,16 @@ func WaitForDevice(timeout int) error {
 	}
 }
 
+// CaptureScreenshot takes a screenshot from the device and returns the PNG data.
+func CaptureScreenshot(serial string) ([]byte, error) {
+	cmd := exec.Command("adb", "-s", serial, "exec-out", "screencap", "-p")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("screencap: %w", err)
+	}
+	return out, nil
+}
+
 // LaunchPreview starts PreviewActivity on the device with the given composable FQN.
 // It force-stops the app first to ensure the new preview is rendered fresh.
 func LaunchPreview(serial, appPackage, composableFQN string) error {

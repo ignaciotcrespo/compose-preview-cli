@@ -57,4 +57,7 @@ var (
 
 	detailValueStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252"))
+
+	screenshotMarkerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("213")) // pink — screenshot cached
 )

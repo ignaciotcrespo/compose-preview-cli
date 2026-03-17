@@ -22,6 +22,19 @@ func visibleRange(selected, count, maxLines, linesPerItem int) (int, int) {
 	return tui.VisibleRange(selected, count, maxLines, linesPerItem)
 }
 
+// moduleHasScreenshots returns true if any preview in the module has a cached screenshot.
+func (m Model) moduleHasScreenshots(mod scanner.Module) bool {
+	if m.screenshotCache == nil {
+		return false
+	}
+	for _, p := range mod.Previews {
+		if m.screenshotCache.Get(p.FQN) != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // filteredCountForModule returns how many previews in a module match the current filter.
 func (m Model) filteredCountForModule(mod scanner.Module) int {
 	if m.state.Filter == "" {
@@ -71,7 +84,11 @@ func (m Model) renderModulesContent(maxLines int) panelContent {
 		if filteredCount > 0 {
 			countStyle = moduleCountStyle
 		}
-		b.WriteString(cursor + style.Render(mod.Name) + countStyle.Render(count) + "\n")
+		marker := ""
+		if m.moduleHasScreenshots(mod) {
+			marker = screenshotMarkerStyle.Render(" ◉")
+		}
+		b.WriteString(cursor + style.Render(mod.Name) + countStyle.Render(count) + marker + "\n")
 	}
 	return panelContent{
 		content: b.String(),
@@ -114,7 +131,11 @@ func (m Model) renderPreviewsContent(maxLines int) panelContent {
 		if p.PreviewName != "" {
 			name += " (" + p.PreviewName + ")"
 		}
-		b.WriteString(cursor + style.Render(name) + "\n")
+		marker := ""
+		if m.screenshotCache != nil && m.screenshotCache.Get(p.FQN) != nil {
+			marker = screenshotMarkerStyle.Render(" ◉")
+		}
+		b.WriteString(cursor + style.Render(name) + marker + "\n")
 	}
 	return panelContent{
 		content: b.String(),
@@ -168,7 +189,7 @@ func (m Model) renderHelp() string {
 		return helpStyle.Render(" type to filter · tab panels · esc clear · enter confirm")
 	}
 
-	parts := []string{"enter run", "b build", "/ filter", "d device", "R refresh", "q quit"}
+	parts := []string{"enter run", "s screenshot", "o open image", "b build", "/ filter", "d device", "q quit"}
 	return helpStyle.Render(" " + strings.Join(parts, " · "))
 }
 
