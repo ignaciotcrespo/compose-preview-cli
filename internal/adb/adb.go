@@ -2,6 +2,7 @@ package adb
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -68,6 +69,78 @@ func FindInstalledPackage(serial, baseAppId string) []string {
 		}
 	}
 	return matches
+}
+
+// AVD represents an Android Virtual Device (emulator).
+type AVD struct {
+	Name string
+}
+
+// ListAVDs returns available Android emulator AVDs.
+func ListAVDs() []AVD {
+	// Try to find emulator binary
+	emulator, err := findEmulator()
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command(emulator, "-list-avds").Output()
+	if err != nil {
+		return nil
+	}
+	var avds []AVD
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			avds = append(avds, AVD{Name: line})
+		}
+	}
+	return avds
+}
+
+// StartEmulator launches an emulator AVD in the background.
+// Returns immediately — the emulator boots asynchronously.
+func StartEmulator(avdName string) error {
+	emulator, err := findEmulator()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(emulator, "-avd", avdName, "-no-snapshot-load")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Start()
+}
+
+// findEmulator locates the emulator binary.
+func findEmulator() (string, error) {
+	// Check PATH first
+	if p, err := exec.LookPath("emulator"); err == nil {
+		return p, nil
+	}
+	// Check ANDROID_HOME / ANDROID_SDK_ROOT
+	for _, envVar := range []string{"ANDROID_HOME", "ANDROID_SDK_ROOT"} {
+		sdk := os.Getenv(envVar)
+		if sdk != "" {
+			p := fmt.Sprintf("%s/emulator/emulator", sdk)
+			if _, err := os.Stat(p); err == nil {
+				return p, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("emulator not found — set ANDROID_HOME or add emulator to PATH")
+}
+
+// WaitForDevice waits for a device to come online (up to timeout).
+func WaitForDevice(timeout int) error {
+	args := []string{"wait-for-device"}
+	cmd := exec.Command("adb", args...)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		return err
+	case <-make(chan struct{}):
+		return fmt.Errorf("timeout waiting for device")
+	}
 }
 
 // LaunchPreview starts PreviewActivity on the device with the given composable FQN.

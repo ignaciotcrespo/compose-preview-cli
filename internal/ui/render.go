@@ -168,7 +168,7 @@ func (m Model) renderHelp() string {
 		return helpStyle.Render(" type to filter · tab panels · esc clear · enter confirm")
 	}
 
-	parts := []string{"enter run", "b build", "/ filter", "R refresh", "q quit"}
+	parts := []string{"enter run", "b build", "/ filter", "d device", "R refresh", "q quit"}
 	return helpStyle.Render(" " + strings.Join(parts, " · "))
 }
 

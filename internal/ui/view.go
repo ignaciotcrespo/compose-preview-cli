@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -30,8 +31,14 @@ func (m Model) View() string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(selectedAccent).Render(" Compose Preview Browser")
 	projectInfo := statusBarStyle.Render(" — " + m.scanResult.ProjectName)
 	deviceInfo := ""
-	if m.deviceStatus != "" {
-		deviceInfo = statusBarStyle.Render(" · ") + detailValueStyle.Render(m.deviceStatus)
+	if len(m.devices) == 0 {
+		if m.emulatorBooting {
+			deviceInfo = statusBarStyle.Render(" · ") + lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("booting emulator...")
+		} else {
+			deviceInfo = statusBarStyle.Render(" · ") + errorStyle.Render("no device") + statusBarStyle.Render(" (d to select)")
+		}
+	} else if m.deviceStatus != "" {
+		deviceInfo = statusBarStyle.Render(" · ") + detailValueStyle.Render(m.deviceStatus) + statusBarStyle.Render(" (d to change)")
 	}
 	header := title + projectInfo + deviceInfo
 
@@ -96,5 +103,113 @@ func (m Model) View() string {
 		parts = append(parts, m.prompt.Render())
 	}
 	parts = append(parts, m.renderHelp())
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	layout := lipgloss.JoinVertical(lipgloss.Left, parts...)
+
+	// Overlay device picker modal if active
+	if m.showDevicePicker {
+		modal := m.renderDevicePickerModal()
+		layout = m.overlayModal(layout, modal)
+	}
+
+	return layout
+}
+
+// renderDevicePickerModal renders the device/emulator selection modal.
+func (m Model) renderDevicePickerModal() string {
+	var lines []string
+	hasDevices := false
+	hasAVDs := false
+
+	for i, item := range m.devicePickerItems {
+		if item.isDevice && !hasDevices {
+			hasDevices = true
+			lines = append(lines, inputLabelStyle.Render("Connected devices:"))
+		}
+		if !item.isDevice && !hasAVDs {
+			hasAVDs = true
+			if hasDevices {
+				lines = append(lines, "") // separator
+			}
+			lines = append(lines, inputLabelStyle.Render("Emulators (will launch):"))
+		}
+
+		cursor := "  "
+		style := normalItemStyle
+		if i == m.devicePickerSel {
+			cursor = "▸ "
+			style = selectedItemStyle
+		}
+		lines = append(lines, cursor+style.Render(item.label))
+	}
+
+	if len(m.devicePickerItems) == 0 {
+		lines = append(lines, statusBarStyle.Render("  No devices or emulators found"))
+	}
+
+	content := ""
+	for _, l := range lines {
+		content += l + "\n"
+	}
+
+	// Calculate modal width based on longest item
+	modalW := 40
+	for _, item := range m.devicePickerItems {
+		if len(item.label)+4 > modalW {
+			modalW = len(item.label) + 4
+		}
+	}
+	if modalW > m.width-4 {
+		modalW = m.width - 4
+	}
+
+	modalH := len(lines)
+	help := helpStyle.Render(" ↑↓ navigate · enter select · esc cancel")
+
+	return panel.Box(0, "Select Device / Emulator", content+help, modalW, modalH+1, true,
+		panel.BoxOpts{Accent: selectedAccent})
+}
+
+// overlayModal places a modal string centered on top of the base layout.
+func (m Model) overlayModal(base, modal string) string {
+	baseLines := strings.Split(base, "\n")
+	modalLines := strings.Split(modal, "\n")
+
+	// Center vertically
+	startY := (len(baseLines) - len(modalLines)) / 2
+	if startY < 0 {
+		startY = 0
+	}
+
+	// Center horizontally
+	modalWidth := 0
+	for _, l := range modalLines {
+		w := lipgloss.Width(l)
+		if w > modalWidth {
+			modalWidth = w
+		}
+	}
+	startX := (m.width - modalWidth) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	// Overlay modal lines onto base
+	for i, ml := range modalLines {
+		row := startY + i
+		if row >= len(baseLines) {
+			break
+		}
+		// Replace the portion of the base line with the modal line
+		baseLine := baseLines[row]
+		baseW := lipgloss.Width(baseLine)
+
+		if startX >= baseW {
+			baseLines[row] = baseLine + strings.Repeat(" ", startX-baseW) + ml
+		} else {
+			// Pad modal line to overlay cleanly
+			baseLines[row] = strings.Repeat(" ", startX) + ml
+		}
+	}
+
+	return strings.Join(baseLines, "\n")
 }

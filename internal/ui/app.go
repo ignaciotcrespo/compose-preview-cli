@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,6 +26,25 @@ type buildCompleteMsg struct {
 type adbLaunchMsg struct {
 	preview string
 	err     error
+}
+
+// emulatorStartedMsg is sent when an emulator launch begins.
+type emulatorStartedMsg struct {
+	avdName string
+	err     error
+}
+
+// emulatorReadyMsg is sent when the emulator is ready (device detected).
+type emulatorReadyMsg struct {
+	device adb.Device
+}
+
+// devicePickerItem is an entry in the device/emulator picker.
+type devicePickerItem struct {
+	label    string
+	isDevice bool   // true = connected device, false = AVD to launch
+	serial   string // for devices
+	avdName  string // for AVDs
 }
 
 func init() {
@@ -51,9 +71,14 @@ type Model struct {
 	projectRoot string
 	appId       string // applicationId from the app module (for ADB launch)
 
-	// Device
-	deviceStatus string
-	devices      []adb.Device
+	// Device / Emulator
+	deviceStatus   string
+	devices        []adb.Device
+	avds           []adb.AVD  // available emulator AVDs
+	showDevicePicker bool     // modal is visible
+	devicePickerSel  int      // cursor in the picker
+	devicePickerItems []devicePickerItem // combined list of devices + AVDs
+	emulatorBooting  bool
 
 	// Build status
 	statusMsg     string
@@ -93,6 +118,8 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 
 	deviceStatus := ""
 	var devices []adb.Device
+	var avds []adb.AVD
+	showPicker := false
 	if adb.IsADBAvailable() {
 		if d, err := adb.DetectDevices(); err == nil && len(d) > 0 {
 			devices = d
@@ -103,6 +130,11 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 			}
 		} else {
 			deviceStatus = "no device"
+			// No devices — check for emulators
+			avds = adb.ListAVDs()
+			if len(avds) > 0 {
+				showPicker = true
+			}
 		}
 	} else {
 		deviceStatus = "adb not found"
@@ -121,20 +153,26 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	si.Placeholder = "type to filter previews..."
 	si.CharLimit = 100
 
-	return Model{
-		state:         controller.NewState(),
-		scanResult:    result,
-		modules:       modules,
-		projectRoot:   projectRoot,
-		appId:         appId,
-		appModulePath: appModulePath,
-		devices:       devices,
-		deviceStatus:  deviceStatus,
-		needsBuild:    needsBuild,
-		buildWarning:  buildWarning,
-		searchInput:   si,
-		panelRegions:  make(map[types.PanelID]panel.Region),
+	m := Model{
+		state:            controller.NewState(),
+		scanResult:       result,
+		modules:          modules,
+		projectRoot:      projectRoot,
+		appId:            appId,
+		appModulePath:    appModulePath,
+		devices:          devices,
+		deviceStatus:     deviceStatus,
+		needsBuild:       needsBuild,
+		buildWarning:     buildWarning,
+		searchInput:      si,
+		avds:             avds,
+		showDevicePicker: showPicker,
+		panelRegions:     make(map[types.PanelID]panel.Region),
 	}
+	if showPicker {
+		m.devicePickerItems = m.buildPickerItems()
+	}
+	return m
 }
 
 // scanCompleteMsg is sent when an async rescan finishes.
@@ -182,6 +220,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.needsBuild, m.buildWarning = gradle.NeedsBuild(m.appModulePath, m.projectRoot)
 		return m, nil
 
+	case emulatorStartedMsg:
+		if msg.err != nil {
+			m.errorMsg = fmt.Sprintf("Failed to start emulator: %v", msg.err)
+			m.emulatorBooting = false
+		} else {
+			m.statusMsg = fmt.Sprintf("Starting emulator %s...", msg.avdName)
+			m.emulatorBooting = true
+			m.errorMsg = ""
+			// Poll for device to appear
+			return m, m.pollForEmulator()
+		}
+		return m, nil
+
+	case emulatorReadyMsg:
+		m.emulatorBooting = false
+		m.devices = append(m.devices, msg.device)
+		if msg.device.Model != "" {
+			m.deviceStatus = msg.device.Model
+		} else {
+			m.deviceStatus = msg.device.Serial
+		}
+		m.statusMsg = fmt.Sprintf("Emulator ready: %s", m.deviceStatus)
+		m.errorMsg = ""
+		return m, nil
+
 	case adbLaunchMsg:
 		if msg.err != nil {
 			m.errorMsg = fmt.Sprintf("Launch failed: %v", msg.err)
@@ -206,6 +269,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmd
 			}
+		}
+
+		// Device picker modal is active
+		if m.showDevicePicker {
+			switch msg.String() {
+			case "up", "k":
+				if m.devicePickerSel > 0 {
+					m.devicePickerSel--
+				}
+				return m, nil
+			case "down", "j":
+				if m.devicePickerSel < len(m.devicePickerItems)-1 {
+					m.devicePickerSel++
+				}
+				return m, nil
+			case "enter":
+				if m.devicePickerSel < len(m.devicePickerItems) {
+					item := m.devicePickerItems[m.devicePickerSel]
+					m.showDevicePicker = false
+					if item.isDevice {
+						// Select existing device
+						for _, d := range m.devices {
+							if d.Serial == item.serial {
+								if d.Model != "" {
+									m.deviceStatus = d.Model
+								} else {
+									m.deviceStatus = d.Serial
+								}
+								// Move selected device to front
+								break
+							}
+						}
+					} else {
+						// Launch emulator
+						return m, m.launchEmulator(item.avdName)
+					}
+				}
+				return m, nil
+			case "esc", "q":
+				m.showDevicePicker = false
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
 		}
 
 		// Search bar is active — route keys to textinput
@@ -244,6 +352,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Normal mode — controller handles keys
 		key := msg.String()
+
+		// "d" opens device/emulator picker
+		if key == "d" {
+			m.avds = adb.ListAVDs() // refresh AVD list
+			if newDevices, err := adb.DetectDevices(); err == nil {
+				m.devices = newDevices
+			}
+			m.devicePickerItems = m.buildPickerItems()
+			m.devicePickerSel = 0
+			m.showDevicePicker = true
+			return m, nil
+		}
 
 		// "/" activates search bar
 		if key == "/" {
@@ -537,6 +657,65 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// buildPickerItems creates the combined list of connected devices and available AVDs.
+func (m *Model) buildPickerItems() []devicePickerItem {
+	var items []devicePickerItem
+	// Connected devices first
+	for _, d := range m.devices {
+		label := d.Serial
+		if d.Model != "" {
+			label = d.Model + " (" + d.Serial + ")"
+		}
+		items = append(items, devicePickerItem{
+			label:    label,
+			isDevice: true,
+			serial:   d.Serial,
+		})
+	}
+	// Then AVDs
+	for _, avd := range m.avds {
+		items = append(items, devicePickerItem{
+			label:   avd.Name,
+			avdName: avd.Name,
+		})
+	}
+	return items
+}
+
+// launchEmulator starts an emulator AVD asynchronously.
+func (m *Model) launchEmulator(avdName string) tea.Cmd {
+	m.statusMsg = fmt.Sprintf("Launching emulator %s...", avdName)
+	m.errorMsg = ""
+	return func() tea.Msg {
+		err := adb.StartEmulator(avdName)
+		return emulatorStartedMsg{avdName: avdName, err: err}
+	}
+}
+
+// pollForEmulator polls adb devices until a new emulator appears.
+func (m *Model) pollForEmulator() tea.Cmd {
+	existingSerials := make(map[string]bool)
+	for _, d := range m.devices {
+		existingSerials[d.Serial] = true
+	}
+	return func() tea.Msg {
+		// Poll every 2 seconds for up to 60 seconds
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			devices, err := adb.DetectDevices()
+			if err != nil {
+				continue
+			}
+			for _, d := range devices {
+				if !existingSerials[d.Serial] && d.State == "device" {
+					return emulatorReadyMsg{device: d}
+				}
+			}
+		}
+		return emulatorReadyMsg{device: adb.Device{Serial: "timeout", Model: "emulator (timeout)"}}
+	}
 }
 
 // startRescan launches an async rescan of the project.
