@@ -2,3 +2,6 @@
 /compose-preview
 dist/
 .gitshelf/
+electron/node_modules/
+electron/dist/
+electron/bin/

@@ -1,0 +1,27 @@
+# This template is used to generate the Homebrew cask for the Electron app.
+# It should be placed in the homebrew-tap repo as Casks/compose-preview-app.rb
+#
+# To update: replace VERSION and SHA256 after each release.
+
+cask "compose-preview-app" do
+  version "VERSION"
+
+  if Hardware::CPU.arm?
+    url "https://github.com/ignaciotcrespo/compose-preview-cli/releases/download/v#{version}/Compose-Preview-#{version}-arm64.dmg"
+    sha256 "SHA256_ARM64"
+  else
+    url "https://github.com/ignaciotcrespo/compose-preview-cli/releases/download/v#{version}/Compose-Preview-#{version}.dmg"
+    sha256 "SHA256_X64"
+  end
+
+  name "Compose Preview"
+  desc "Browse and run Jetpack Compose previews without Android Studio"
+  homepage "https://github.com/ignaciotcrespo/compose-preview-cli"
+
+  app "Compose Preview.app"
+
+  zap trash: [
+    "~/Library/Application Support/compose-preview-app",
+    "~/Library/Preferences/com.ignaciotcrespo.compose-preview.plist",
+  ]
+end

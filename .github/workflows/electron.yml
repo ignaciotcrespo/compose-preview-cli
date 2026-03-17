@@ -1,0 +1,119 @@
+name: Electron Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # Build the Go binary for each platform first
+  build-go:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build Go binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o compose-preview${EXT} ./cmd/compose-preview
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: compose-preview*
+
+  # Build Electron app for each platform
+  build-electron:
+    needs: build-go
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            electron-args: "--mac --arm64"
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            electron-args: "--mac --x64"
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            electron-args: "--linux --x64"
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            electron-args: "--win --x64"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Download the matching Go binary
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: electron/
+
+      - name: Make Go binary executable
+        if: runner.os != 'Windows'
+        run: chmod +x electron/compose-preview
+
+      # Move binary to where electron-builder expects it
+      - name: Place binary for bundling
+        run: |
+          mkdir -p electron/bin
+          cp electron/compose-preview* electron/bin/ || true
+
+      # Temporarily update extraResources path for CI
+      - name: Update extraResources for CI build
+        working-directory: electron
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            pkg.build.extraResources = [{ from: 'bin/', to: 'bin/' }];
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+
+      - name: Install dependencies
+        working-directory: electron
+        run: npm install
+
+      - name: Rebuild native modules
+        working-directory: electron
+        run: npx electron-rebuild -f -w node-pty
+
+      - name: Build Electron app
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder ${{ matrix.electron-args }} --publish always

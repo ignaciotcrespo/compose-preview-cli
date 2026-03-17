@@ -59,8 +59,18 @@ func (m Model) View() string {
 	detailH := 3
 	contentH := m.height - detailH - 8
 
-	leftW := m.width / 4
-	rightW := m.width - leftW - 4 // -4 for borders
+	var leftW, midW, rightW int
+	if m.electronMode {
+		// 2-panel layout: Electron shows the screenshot
+		leftW = m.width / 4
+		midW = m.width - leftW - 4
+		rightW = 0
+	} else {
+		// 3-panel layout: modules(1/5) | previews(2/5) | screenshot(2/5)
+		leftW = m.width / 5
+		midW = (m.width - leftW - 6) / 2
+		rightW = m.width - leftW - midW - 6
+	}
 
 	// Modules panel
 	modFocused := m.state.Focus == types.PanelModules
@@ -73,10 +83,27 @@ func (m Model) View() string {
 	filtered := m.filteredPreviews()
 	prevTitle := fmt.Sprintf("Previews (%d)", len(filtered))
 	prevPC := m.renderPreviewsContent(contentH)
-	prevBox := panel.Box(2, prevTitle, prevPC.content, rightW, contentH, prevFocused,
+	prevBox := panel.Box(2, prevTitle, prevPC.content, midW, contentH, prevFocused,
 		panel.BoxOpts{Scroll: prevPC.scroll, Accent: panelAccent(prevFocused)})
 
-	topPanels := lipgloss.JoinHorizontal(lipgloss.Top, modBox, prevBox)
+	var topPanels string
+	if m.electronMode {
+		topPanels = lipgloss.JoinHorizontal(lipgloss.Top, modBox, prevBox)
+	} else {
+		// Screenshot panel
+		previewContent, previewAge := m.currentPreviewScreenshot(rightW, contentH)
+		screenshotTitle := "Preview"
+		if m.capturing {
+			screenshotTitle = "Preview (capturing...)"
+		} else if previewAge != "" {
+			screenshotTitle = fmt.Sprintf("Preview (%s)", previewAge)
+		}
+		if previewContent == "" {
+			previewContent = statusBarStyle.Render("  No screenshot\n  s to capture\n  enter auto-captures")
+		}
+		screenshotBox := panel.Box(3, screenshotTitle, previewContent, rightW, contentH, false)
+		topPanels = lipgloss.JoinHorizontal(lipgloss.Top, modBox, prevBox, screenshotBox)
+	}
 
 	// Details panel
 	detailContent := m.renderDetailsContent(m.width - 4)

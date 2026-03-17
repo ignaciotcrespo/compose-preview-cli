@@ -2,6 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -12,8 +16,10 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/gradle"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/scanner"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/panel"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/prompt"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/screenshot"
 )
 
 // buildCompleteMsg is sent when a gradle build finishes.
@@ -25,6 +31,13 @@ type buildCompleteMsg struct {
 // adbLaunchMsg is sent when an ADB launch completes.
 type adbLaunchMsg struct {
 	preview string
+	err     error
+}
+
+// screenshotMsg is sent when a screenshot capture completes.
+type screenshotMsg struct {
+	fqn     string
+	pngData []byte
 	err     error
 }
 
@@ -90,12 +103,21 @@ type Model struct {
 	installTasks  []string // cached install tasks (e.g. installDevDebug, installAcceptDebug)
 	lastBuildTask string   // remember last selected task
 
+	// Screenshot cache and rendered preview
+	screenshotCache *screenshot.Cache
+	renderedPreview string // current rendered half-block image
+	previewFQN      string // FQN of the currently rendered preview
+	capturing       bool   // screenshot capture in progress
+
 	// Search bar (always visible at top)
 	searchInput  textinput.Model
 	searchActive bool // true when search bar is focused
 
 	// Prompt
 	prompt prompt.Prompt
+
+	// Electron mode: hide screenshot panel, Electron shows it
+	electronMode bool
 
 	// Panel regions for mouse click detection
 	panelRegions map[types.PanelID]panel.Region
@@ -154,6 +176,7 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	si.CharLimit = 100
 
 	m := Model{
+		electronMode:     os.Getenv("COMPOSE_PREVIEW_ELECTRON") == "1",
 		state:            controller.NewState(),
 		scanResult:       result,
 		modules:          modules,
@@ -164,6 +187,7 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 		deviceStatus:     deviceStatus,
 		needsBuild:       needsBuild,
 		buildWarning:     buildWarning,
+		screenshotCache:  screenshot.NewCache(),
 		searchInput:      si,
 		avds:             avds,
 		showDevicePicker: showPicker,
@@ -220,6 +244,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.needsBuild, m.buildWarning = gradle.NeedsBuild(m.appModulePath, m.projectRoot)
 		return m, nil
 
+	case screenshotMsg:
+		m.capturing = false
+		if msg.err != nil {
+			m.errorMsg = fmt.Sprintf("Screenshot failed: %v", msg.err)
+		} else {
+			m.screenshotCache.Put(msg.fqn, msg.pngData)
+			m.previewFQN = msg.fqn
+			// Render will pick it up from the cache
+		}
+		return m, nil
+
 	case emulatorStartedMsg:
 		if msg.err != nil {
 			m.errorMsg = fmt.Sprintf("Failed to start emulator: %v", msg.err)
@@ -248,11 +283,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case adbLaunchMsg:
 		if msg.err != nil {
 			m.errorMsg = fmt.Sprintf("Launch failed: %v", msg.err)
-		} else {
-			m.statusMsg = fmt.Sprintf("Launched: %s", msg.preview)
-			m.errorMsg = ""
+			return m, nil
 		}
-		return m, nil
+		m.statusMsg = fmt.Sprintf("Launched: %s", msg.preview)
+		m.errorMsg = ""
+		// Auto-capture screenshot after a short delay for the preview to render
+		return m, m.delayedScreenshotCapture()
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -365,6 +401,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// "s" captures screenshot of current preview
+		if key == "s" {
+			return m, m.captureScreenshot()
+		}
+
+		// "o" opens the cached screenshot in the system image viewer
+		if key == "o" {
+			m.openScreenshotExternal()
+			return m, nil
+		}
+
 		// "/" activates search bar
 		if key == "/" {
 			m.searchActive = true
@@ -378,6 +425,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		kr := controller.HandleKey(key, m.state, keyCtx)
 		m.state = kr.State
+
+		// Signal selection change to external viewers
+		if previews := m.filteredPreviews(); len(previews) > 0 && m.state.PreviewSel < len(previews) {
+			m.screenshotCache.SignalSelection(previews[m.state.PreviewSel].FQN)
+		}
 
 		if kr.Quit {
 			return m, tea.Quit
@@ -657,6 +709,111 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// openScreenshotExternal opens the cached screenshot in the system image viewer.
+func (m *Model) openScreenshotExternal() {
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) {
+		return
+	}
+	fqn := previews[m.state.PreviewSel].FQN
+	entry := m.screenshotCache.Get(fqn)
+	if entry == nil {
+		m.errorMsg = "No screenshot cached — press 's' first"
+		return
+	}
+
+	// Write to temp file
+	tmpDir := filepath.Join(os.TempDir(), "compose-preview")
+	os.MkdirAll(tmpDir, 0755)
+	tmpFile := filepath.Join(tmpDir, "preview.png")
+	if err := os.WriteFile(tmpFile, entry.PNGData, 0644); err != nil {
+		m.errorMsg = fmt.Sprintf("Failed to write screenshot: %v", err)
+		return
+	}
+
+	// Open with system viewer
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", tmpFile)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", tmpFile)
+	default:
+		cmd = exec.Command("xdg-open", tmpFile)
+	}
+	cmd.Start()
+	m.statusMsg = fmt.Sprintf("Opened: %s", tmpFile)
+}
+
+// captureScreenshot takes a screenshot of the current preview.
+func (m *Model) captureScreenshot() tea.Cmd {
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) || len(m.devices) == 0 {
+		return nil
+	}
+	if m.capturing {
+		return nil
+	}
+	m.capturing = true
+
+	p := previews[m.state.PreviewSel]
+	serial := m.devices[0].Serial
+	fqn := p.FQN
+	m.screenshotCache.SignalCapturing(fqn)
+
+	return func() tea.Msg {
+		data, err := adb.CaptureScreenshot(serial)
+		return screenshotMsg{fqn: fqn, pngData: data, err: err}
+	}
+}
+
+// delayedScreenshotCapture waits a moment then captures a screenshot.
+func (m *Model) delayedScreenshotCapture() tea.Cmd {
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) || len(m.devices) == 0 {
+		return nil
+	}
+	m.capturing = true
+
+	p := previews[m.state.PreviewSel]
+	serial := m.devices[0].Serial
+	fqn := p.FQN
+	m.screenshotCache.SignalCapturing(fqn)
+
+	return func() tea.Msg {
+		// Wait for the preview to render on device
+		time.Sleep(2 * time.Second)
+		data, err := adb.CaptureScreenshot(serial)
+		return screenshotMsg{fqn: fqn, pngData: data, err: err}
+	}
+}
+
+// currentPreviewScreenshot returns the rendered screenshot for the currently selected preview.
+func (m Model) currentPreviewScreenshot(width, height int) (string, string) {
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) {
+		return "", ""
+	}
+
+	fqn := previews[m.state.PreviewSel].FQN
+
+	if m.capturing && fqn == m.previewFQN {
+		return "  Capturing...", ""
+	}
+
+	entry := m.screenshotCache.Get(fqn)
+	if entry == nil {
+		if m.capturing {
+			return "  Capturing...", ""
+		}
+		return "  No screenshot (s to capture)", ""
+	}
+
+	rendered := imgrender.Render(entry.PNGData, width, height-1) // -1 for age line
+	age := "cached " + entry.Age()
+	return rendered, age
 }
 
 // buildPickerItems creates the combined list of connected devices and available AVDs.

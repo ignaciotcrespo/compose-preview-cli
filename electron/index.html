@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Compose Preview</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      display: flex;
+      height: 100vh;
+      background: #1e1e1e;
+      color: #ccc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    /* Left pane: terminal */
+    #terminal-pane {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #333;
+    }
+    #terminal-container {
+      flex: 1;
+      padding: 4px;
+    }
+
+    /* Right pane: preview image */
+    #preview-pane {
+      width: 380px;
+      display: flex;
+      flex-direction: column;
+      background: #111;
+    }
+    #preview-header {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #888;
+      border-bottom: 1px solid #333;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #preview-header .fqn {
+      color: #5aafff;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    #preview-header .age {
+      color: #888;
+      margin-left: 8px;
+    }
+    #preview-header .time {
+      color: #5aafff;
+      margin-left: 4px;
+    }
+    #preview-header .capturing {
+      color: #e8a838;
+      margin-left: 8px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .capturing { animation: pulse 1.2s ease-in-out infinite; }
+    #preview-image-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      overflow: hidden;
+    }
+    #preview-image {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+      image-rendering: auto;
+    }
+    #preview-placeholder {
+      color: #555;
+      font-size: 14px;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    /* Resizable divider */
+    #divider {
+      width: 4px;
+      cursor: col-resize;
+      background: #333;
+      transition: background 0.15s;
+    }
+    #divider:hover { background: #555; }
+  </style>
+</head>
+<body>
+
+  <div id="terminal-pane">
+    <div id="terminal-container"></div>
+  </div>
+
+  <div id="divider"></div>
+
+  <div id="preview-pane">
+    <div id="preview-header">
+      <span id="preview-fqn" class="fqn">No preview selected</span>
+      <span id="preview-status" class="age"></span>
+    </div>
+    <div id="preview-image-container">
+      <div id="preview-placeholder">
+        Select a preview and press<br>
+        <strong>Enter</strong> to run &amp; capture<br>
+        or <strong>s</strong> to screenshot
+      </div>
+      <div id="preview-loading" style="display:none">
+        <span class="capturing">Capturing screenshot...</span>
+      </div>
+      <img id="preview-image" style="display:none">
+    </div>
+  </div>
+
+  <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script>
+    // --- Terminal setup ---
+    const term = new Terminal({
+      fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace',
+      fontSize: 13,
+      theme: {
+        background: '#1e1e1e',
+        foreground: '#cccccc',
+        cursor: '#ffffff',
+        selectionBackground: '#264f78',
+      },
+      cursorBlink: true,
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal-container'));
+    fitAddon.fit();
+
+    // Send terminal data to PTY
+    term.onData((data) => window.api.sendTerminalInput(data));
+
+    // Receive PTY output
+    window.api.onTerminalData((data) => term.write(data));
+
+    // Handle resize
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+      window.api.sendTerminalResize(term.cols, term.rows);
+    });
+    resizeObserver.observe(document.getElementById('terminal-container'));
+
+    // --- Preview image updates ---
+    const previewImg = document.getElementById('preview-image');
+    const previewPlaceholder = document.getElementById('preview-placeholder');
+    const previewLoading = document.getElementById('preview-loading');
+    const previewFqn = document.getElementById('preview-fqn');
+    const previewStatus = document.getElementById('preview-status');
+
+    window.api.onPreviewUpdate((data) => {
+      // Update FQN display (show just the class.method part)
+      const fqnParts = data.fqn.split('.');
+      const shortFqn = fqnParts.slice(-2).join('.');
+      previewFqn.textContent = shortFqn;
+      previewFqn.title = data.fqn; // full FQN on hover
+
+      if (data.capturing) {
+        // Loading state
+        previewLoading.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+        previewImg.style.display = 'none';
+        previewStatus.innerHTML = '<span class="capturing">capturing...</span>';
+      } else if (data.imageData) {
+        // Screenshot available
+        previewImg.src = data.imageData;
+        previewImg.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+        previewLoading.style.display = 'none';
+        let statusText = '';
+        if (data.capturedAt) statusText += `<span class="time">${data.capturedAt}</span>`;
+        if (data.age) statusText += `<span class="age">(${data.age})</span>`;
+        previewStatus.innerHTML = statusText;
+      } else {
+        // No screenshot
+        previewImg.style.display = 'none';
+        previewLoading.style.display = 'none';
+        previewPlaceholder.style.display = 'block';
+        previewPlaceholder.innerHTML = 'No screenshot cached<br>Press <strong>Enter</strong> to capture';
+        previewStatus.innerHTML = '';
+      }
+    });
+
+    // --- Resizable divider ---
+    const divider = document.getElementById('divider');
+    const previewPane = document.getElementById('preview-pane');
+    let isDragging = false;
+
+    divider.addEventListener('mousedown', () => { isDragging = true; });
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const newWidth = document.body.clientWidth - e.clientX;
+      previewPane.style.width = Math.max(200, Math.min(800, newWidth)) + 'px';
+      fitAddon.fit();
+      window.api.sendTerminalResize(term.cols, term.rows);
+    });
+    document.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Focus terminal on click
+    document.getElementById('terminal-pane').addEventListener('click', () => term.focus());
+    term.focus();
+  </script>
+</body>
+</html>
