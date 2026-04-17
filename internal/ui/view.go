@@ -58,7 +58,7 @@ func (m Model) View() string {
 	} else if m.statusMsg != "" {
 		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("35")).Render(" ● " + m.statusMsg)
 	} else if m.needsBuild {
-		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(" ⚠ " + m.buildWarning + " — press 'b' to rebuild")
+		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(" ⚠ " + m.buildWarning + " — press 'i' to install")
 	}
 
 	// Calculate panel dimensions
@@ -108,6 +108,7 @@ func (m Model) View() string {
 		if previewContent == "" {
 			previewContent = statusBarStyle.Render("  No screenshot\n  s to capture\n  enter auto-captures")
 		}
+		previewContent += "\n" + helpStyle.Render("  w for HD preview in browser")
 		screenshotBox := panel.Box(3, screenshotTitle, previewContent, rightW, contentH, false)
 		topPanels = lipgloss.JoinHorizontal(lipgloss.Top, modBox, prevBox, screenshotBox)
 	}
@@ -142,6 +143,12 @@ func (m Model) View() string {
 	// Overlay device picker modal if active
 	if m.showDevicePicker {
 		modal := m.renderDevicePickerModal()
+		layout = m.overlayModal(layout, modal)
+	}
+
+	// Overlay install task picker modal if active
+	if m.showInstallPicker {
+		modal := m.renderInstallPickerModal()
 		layout = m.overlayModal(layout, modal)
 	}
 
@@ -200,6 +207,47 @@ func (m Model) renderDevicePickerModal() string {
 	help := helpStyle.Render(" ↑↓ navigate · enter select · esc cancel")
 
 	return panel.Box(0, "Select Device / Emulator", content+help, modalW, modalH+1, true,
+		panel.BoxOpts{Accent: selectedAccent})
+}
+
+// renderInstallPickerModal renders the install task selection modal.
+func (m Model) renderInstallPickerModal() string {
+	var lines []string
+
+	if len(m.installTasks) == 0 {
+		// Still loading
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("  ⏳ Querying gradle install tasks..."))
+	} else {
+		for i, task := range m.installTasks {
+			cursor := "  "
+			style := normalItemStyle
+			if i == m.installPickerSel {
+				cursor = "▸ "
+				style = selectedItemStyle
+			}
+			lines = append(lines, cursor+style.Render(task))
+		}
+	}
+
+	content := ""
+	for _, l := range lines {
+		content += l + "\n"
+	}
+
+	modalW := 40
+	for _, task := range m.installTasks {
+		if len(task)+4 > modalW {
+			modalW = len(task) + 4
+		}
+	}
+	if modalW > m.width-4 {
+		modalW = m.width - 4
+	}
+
+	modalH := len(lines)
+	help := helpStyle.Render(" ↑↓ navigate · enter select · esc cancel")
+
+	return panel.Box(0, "Select Install Task", content+help, modalW, modalH+1, true,
 		panel.BoxOpts{Accent: selectedAccent})
 }
 
