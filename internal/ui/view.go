@@ -40,7 +40,14 @@ func (m Model) View() string {
 	} else if m.deviceStatus != "" {
 		deviceInfo = statusBarStyle.Render(" · ") + detailValueStyle.Render(m.deviceStatus) + statusBarStyle.Render(" (d to change)")
 	}
-	header := title + projectInfo + deviceInfo
+	webInfo := ""
+	if m.webServer != nil {
+		url := m.webServer.URL()
+		link := fmt.Sprintf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", url, url)
+		webInfo = statusBarStyle.Render(" · ") + lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(link) +
+			statusBarStyle.Render(" (w to stop)")
+	}
+	header := title + projectInfo + deviceInfo + webInfo
 
 	// Status bar line (always 1 line, shows latest status or error)
 	statusLine := ""

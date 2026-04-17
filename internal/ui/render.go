@@ -189,7 +189,11 @@ func (m Model) renderHelp() string {
 		return helpStyle.Render(" type to filter · tab panels · esc clear · enter confirm")
 	}
 
-	parts := []string{"enter run", "s screenshot", "o open image", "b build", "/ filter", "d device", "q quit"}
+	webLabel := "w web"
+	if m.webServer != nil {
+		webLabel = "w stop web"
+	}
+	parts := []string{"enter run", "s screenshot", webLabel, "b build", "/ filter", "d device", "q quit"}
 	return helpStyle.Render(" " + strings.Join(parts, " · "))
 }
 
