@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -24,12 +25,22 @@ func main() {
 		return
 	}
 
-	// Check for --web flag
+	// Check for --web and --port flags
 	webMode := false
+	webPort := 9999
 	args := []string{}
-	for _, arg := range os.Args[1:] {
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
 		if arg == "--web" || arg == "-w" {
 			webMode = true
+		} else if (arg == "--port" || arg == "-p") && i+1 < len(os.Args) {
+			i++
+			p, err := strconv.Atoi(os.Args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid port %q\n", os.Args[i])
+				os.Exit(1)
+			}
+			webPort = p
 		} else {
 			args = append(args, arg)
 		}
@@ -55,7 +66,7 @@ func main() {
 	}
 
 	if webMode {
-		runWebMode(root)
+		runWebMode(root, webPort)
 		return
 	}
 
@@ -78,7 +89,7 @@ func main() {
 	}
 }
 
-func runWebMode(root string) {
+func runWebMode(root string, port int) {
 	// In web mode, start the server and open the browser.
 	// The server spawns the TUI in a PTY internally.
 	goBinary, err := os.Executable()
@@ -87,14 +98,14 @@ func runWebMode(root string) {
 		os.Exit(1)
 	}
 
-	srv := server.New(9999, goBinary, root)
-	port, err := srv.Start()
+	srv := server.New(port, goBinary, root)
+	actualPort, err := srv.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
 		os.Exit(1)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", port)
+	url := fmt.Sprintf("http://localhost:%d", actualPort)
 	fmt.Fprintf(os.Stderr, "Compose Preview running at %s\n", url)
 
 	// Open browser

@@ -78,6 +78,12 @@ compose-preview
 
 # Or specify a path:
 compose-preview /path/to/android/project
+
+# Open HD web preview in browser:
+compose-preview --web
+
+# Web preview on a custom port (default: 9999):
+compose-preview --web --port 8080
 ```
 
 ### Layout
