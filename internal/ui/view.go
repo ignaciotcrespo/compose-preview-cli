@@ -68,7 +68,7 @@ func (m Model) View() string {
 
 	var leftW, midW, rightW int
 	if m.electronMode {
-		// 2-panel layout: Electron shows the screenshot
+		// 2-panel layout: browser shows the HD screenshot
 		leftW = m.width / 4
 		midW = m.width - leftW - 4
 		rightW = 0
