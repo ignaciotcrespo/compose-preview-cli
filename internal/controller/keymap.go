@@ -78,7 +78,7 @@ func HandleKey(key string, state State, ctx KeyContext) KeyResult {
 		}
 		return kr
 
-	case "b":
+	case "i":
 		kr.RunBuild = true
 		return kr
 

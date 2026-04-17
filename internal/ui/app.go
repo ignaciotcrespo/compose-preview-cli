@@ -16,6 +16,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/gradle"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/scanner"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/server"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/panel"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/prompt"
@@ -52,6 +53,11 @@ type emulatorReadyMsg struct {
 	device adb.Device
 }
 
+// installTasksMsg is sent when gradle install task discovery completes.
+type installTasksMsg struct {
+	tasks []string
+}
+
 // devicePickerItem is an entry in the device/emulator picker.
 type devicePickerItem struct {
 	label    string
@@ -83,6 +89,7 @@ type Model struct {
 	modules     []scanner.Module
 	projectRoot string
 	appId       string // applicationId from the app module (for ADB launch)
+	webServer   *server.Server // nil until started by 'w'
 
 	// Device / Emulator
 	deviceStatus   string
@@ -100,8 +107,10 @@ type Model struct {
 	needsBuild    bool
 	buildWarning  string   // e.g. "sources changed since last build"
 	appModulePath string   // path to the app module (for APK staleness check)
-	installTasks  []string // cached install tasks (e.g. installDevDebug, installAcceptDebug)
-	lastBuildTask string   // remember last selected task
+	installTasks      []string // cached install tasks (e.g. installDevDebug, installAcceptDebug)
+	lastBuildTask     string   // remember last selected task
+	showInstallPicker bool     // modal is visible
+	installPickerSel  int      // cursor in the picker
 
 	// Screenshot cache and rendered preview
 	screenshotCache *screenshot.Cache
@@ -229,6 +238,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case installTasksMsg:
+		m.installTasks = msg.tasks
+		if len(m.installTasks) == 0 {
+			m.showInstallPicker = false
+			m.errorMsg = "No install tasks found"
+			return m, nil
+		}
+		if len(m.installTasks) == 1 {
+			m.showInstallPicker = false
+			return m, m.runBuildTask(m.installTasks[0])
+		}
+		// Tasks loaded — picker is already showing, it will now render the list
+		return m, nil
+
 	case buildCompleteMsg:
 		m.building = false
 		if msg.err != nil {
@@ -352,6 +375,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Install task picker modal is active
+		if m.showInstallPicker {
+			switch msg.String() {
+			case "up", "k":
+				if m.installPickerSel > 0 {
+					m.installPickerSel--
+				}
+				return m, nil
+			case "down", "j":
+				if m.installPickerSel < len(m.installTasks)-1 {
+					m.installPickerSel++
+				}
+				return m, nil
+			case "enter":
+				if m.installPickerSel < len(m.installTasks) {
+					task := m.installTasks[m.installPickerSel]
+					m.showInstallPicker = false
+					return m, m.runBuildTask(task)
+				}
+				return m, nil
+			case "esc", "q":
+				m.showInstallPicker = false
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		// Search bar is active — route keys to textinput
 		if m.searchActive {
 			switch msg.String() {
@@ -398,6 +450,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devicePickerItems = m.buildPickerItems()
 			m.devicePickerSel = 0
 			m.showDevicePicker = true
+			return m, nil
+		}
+
+		// "w" toggles web preview viewer
+		if key == "w" {
+			if m.webServer == nil {
+				// Start server
+				goBinary, _ := os.Executable()
+				m.webServer = server.New(9999, goBinary, m.projectRoot)
+				port, err := m.webServer.Start()
+				if err != nil {
+					m.errorMsg = fmt.Sprintf("Server error: %v", err)
+					m.webServer = nil
+				} else {
+					url := fmt.Sprintf("http://localhost:%d", port)
+					m.statusMsg = fmt.Sprintf("Web viewer: %s", url)
+					// Open browser
+					var cmd *exec.Cmd
+					switch runtime.GOOS {
+					case "darwin":
+						cmd = exec.Command("open", url)
+					case "windows":
+						cmd = exec.Command("cmd", "/c", "start", url)
+					default:
+						cmd = exec.Command("xdg-open", url)
+					}
+					cmd.Start()
+				}
+			} else {
+				// Stop server
+				m.webServer.Stop()
+				m.webServer = nil
+				m.statusMsg = "Web viewer stopped"
+			}
 			return m, nil
 		}
 
@@ -477,8 +563,6 @@ func (m *Model) handlePromptResult(result *prompt.Result) tea.Cmd {
 	case types.PromptFilter:
 		m.state.Filter = result.Value
 		m.state.PreviewSel = 0
-	case types.PromptBuildVariant:
-		return m.runBuildTask(result.Value)
 	}
 	return nil
 }
@@ -517,7 +601,7 @@ func (m *Model) launchPreview() tea.Cmd {
 		if len(packages) == 0 {
 			return adbLaunchMsg{
 				preview: p.FunctionName,
-				err:     fmt.Errorf("app not installed — build and install first (press 'b')"),
+				err:     fmt.Errorf("app not installed — build and install first (press 'i')"),
 			}
 		}
 
@@ -580,27 +664,30 @@ func (m *Model) startBuild() tea.Cmd {
 		}
 	}
 
-	// Discover install tasks if not cached
-	if len(m.installTasks) == 0 {
-		m.statusMsg = "Querying build variants..."
-		m.errorMsg = ""
-		tasks := gradle.ListInstallTasks(gradlew, appModuleName)
-		m.installTasks = tasks
-		m.statusMsg = ""
-	}
-
-	// If only one task, run it directly
-	if len(m.installTasks) == 1 {
-		return m.runBuildTask(m.installTasks[0])
-	}
-
 	// If we used a task before, run it again directly
 	if m.lastBuildTask != "" {
 		return m.runBuildTask(m.lastBuildTask)
 	}
 
-	// Multiple tasks: show quick-select prompt
-	return m.prompt.StartWithOptions(types.PromptBuildVariant, "", m.installTasks)
+	// Show picker modal immediately
+	m.installPickerSel = 0
+	m.showInstallPicker = true
+	m.errorMsg = ""
+
+	// If tasks are already cached, check shortcuts
+	if len(m.installTasks) == 1 {
+		m.showInstallPicker = false
+		return m.runBuildTask(m.installTasks[0])
+	}
+	if len(m.installTasks) > 1 {
+		return nil
+	}
+
+	// Discover install tasks asynchronously
+	return func() tea.Msg {
+		tasks := gradle.ListInstallTasks(gradlew, appModuleName)
+		return installTasksMsg{tasks: tasks}
+	}
 }
 
 func (m *Model) runBuildTask(task string) tea.Cmd {
@@ -811,7 +898,7 @@ func (m Model) currentPreviewScreenshot(width, height int) (string, string) {
 		return "  No screenshot (s to capture)", ""
 	}
 
-	rendered := imgrender.Render(entry.PNGData, width, height-1) // -1 for age line
+	rendered := imgrender.Render(entry.PNGData, width, height-2) // -1 age line, -1 hint line
 	age := "cached " + entry.Age()
 	return rendered, age
 }
