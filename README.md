@@ -17,35 +17,37 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 ```
  Compose Preview Browser — umobKMP · Pixel_6a
  / Filter: login
-╭ 1 Modules ─────────────╮╭ 2 Previews (8) ──────────────────────────────────╮
-│ ▸ :composeApp (0)       ││ ▸ LoginScreenEmptyDarkPreview (Login - Dark)     │
-│   :feature:auth (8)     ││   LoginScreenEmptyLightPreview (Login - Light)   │
-│   :feature:booking (0)  ││   LoginScreenFilledDarkPreview (Login - Filled)  │
-│   :feature:home (0)     ││   LoginScreenLoadingDarkPreview (Login - Loading)│
-│   :feature:map (0)      ││   LoginScreenErrorDarkPreview (Login - Error)    │
-│   :feature:settings (0) ││   LoginFormContentEmptyDarkPreview (LoginForm)   │
-│   :shared:presentation  ││   LoginFormContentFilledDarkPreview (LoginForm)  │
-│     (0)                 ││   LoginFormContentLoadingDarkPreview (LoginForm) │
-│                         ││                                                  │
-│                         ││                                                  │
-│                         ││                                                  │
-╰─────────────────────────╯╰──────────────────────────────────────────────────╯
-╭ Details ────────────────────────────────────────────────────────────────────╮
-│ FQN: com.example.feature.auth.LoginScreenPreviewKt.LoginScreenEmptyDark.. │
-│ File: feature/auth/src/androidMain/.../preview/LoginScreenPreview.kt:42   │
-│ Params: showBackground=true, backgroundColor=0xFF111111                   │
-╰─────────────────────────────────────────────────────────────────────────────╯
+╭ 1 Modules ──────────╮╭ 2 Previews (8) ──────────────────────╮╭ 3 Preview ─────────╮
+│ ▸ :composeApp (0)    ││ ▸ LoginScreenEmptyDarkPreview        ││                     │
+│   :feature:auth (8)  ││   LoginScreenEmptyLightPreview       ││   ┌───────────┐     │
+│   :feature:booking   ││   LoginScreenFilledDarkPreview       ││   │           │     │
+│     (0)              ││   LoginScreenLoadingDarkPreview      ││   │  preview  │     │
+│   :feature:home (0)  ││   LoginScreenErrorDarkPreview        ││   │  image    │     │
+│   :feature:map (0)   ││   LoginFormContentEmptyDarkPreview   ││   │           │     │
+│   :feature:settings  ││   LoginFormContentFilledDarkPreview  ││   └───────────┘     │
+│     (0)              ││   LoginFormContentLoadingDarkPreview ││                     │
+│                      ││                                      ││ w for HD preview    │
+│                      ││                                      ││   in browser        │
+╰──────────────────────╯╰──────────────────────────────────────╯╰─────────────────────╯
+╭ Details ────────────────────────────────────────────────────────────────────────────╮
+│ FQN: com.example.feature.auth.LoginScreenPreviewKt.LoginScreenEmptyDarkPreview     │
+│ File: feature/auth/src/androidMain/.../preview/LoginScreenPreview.kt:42            │
+│ Params: showBackground=true, backgroundColor=0xFF111111                            │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
  ● Launched: LoginScreenEmptyDarkPreview (com.example.app.dev)
- enter run · b build · / filter · q quit
+ enter run · s screenshot · w web · i install · / filter · d device · q quit
 ```
 
 ## What it does
 
 - **Scan** — Discovers all `@Preview` composables across all Gradle modules automatically
-- **Browse** — Navigate modules and previews in a two-panel TUI with keyboard and mouse
+- **Browse** — Navigate modules and previews in a three-panel TUI with keyboard and mouse
 - **Search** — Live filter bar (`/`) matches preview names across all modules, counts update in real time
 - **Run** — Launch any preview on a connected device via ADB with `Enter`
-- **Build** — Trigger Gradle install tasks (`b`) with automatic variant detection (dev, qa, accept, production)
+- **Screenshot** — Capture a preview screenshot (`s`) displayed directly in the terminal
+- **HD Web Preview** — Press `w` to open a local web viewer in your browser with full-quality preview rendering
+- **Install** — Trigger Gradle install tasks (`i`) with automatic variant detection (dev, qa, accept, production)
+- **Device / Emulator picker** — Press `d` to select a connected device or launch an AVD emulator
 - **Details** — See fully qualified name, file path, line number, and `@Preview` parameters
 - **Stale detection** — Warns when source files are newer than the installed APK
 
@@ -81,28 +83,28 @@ compose-preview /path/to/android/project
 ### Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Compose Preview Browser — <project> · <device>                     │  header
-├─────────────────────────────────────────────────────────────────────┤
-│ / Press / to filter previews                                       │  search bar
-├────────────────────┬────────────────────────────────────────────────┤
-│ 1 Modules          │ 2 Previews (88)                               │
-│                    │                                                │
-│ ▸ :composeApp (2)  │ ▸ AppAndroidPreview                           │
-│   :feature:auth    │   AppPreview                                  │  main panels
-│     (30)           │                                                │
-│   :feature:home    │                                                │
-│     (11)           │                                                │
-│   ...              │                                                │
-├────────────────────┴────────────────────────────────────────────────┤
-│ Details                                                             │
-│ FQN: com.example.MainActivityKt.AppAndroidPreview                  │  details
-│ File: composeApp/src/androidMain/.../MainActivity.kt:41            │
-├─────────────────────────────────────────────────────────────────────┤
-│ ⚠ sources changed since last build — press 'b' to rebuild         │  status
-├─────────────────────────────────────────────────────────────────────┤
-│ enter run · b build · / filter · q quit                            │  help
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Compose Preview Browser — <project> · <device> (d to change)                │  header
+├──────────────────────────────────────────────────────────────────────────────┤
+│ / Press / to filter previews                                                │  search bar
+├──────────────┬──────────────────────────┬────────────────────────────────────┤
+│ 1 Modules    │ 2 Previews (88)          │ 3 Preview                         │
+│              │                          │                                   │
+│ ▸ :app (2)   │ ▸ AppAndroidPreview      │   ┌────────────┐                  │
+│   :feature:  │   AppPreview             │   │  preview   │                  │
+│     auth (30)│                          │   │  screenshot│  screenshot panel│
+│   :feature:  │                          │   └────────────┘                  │
+│     home (11)│                          │                                   │
+│   ...        │                          │ w for HD preview in browser       │
+├──────────────┴──────────────────────────┴────────────────────────────────────┤
+│ Details                                                                      │
+│ FQN: com.example.MainActivityKt.AppAndroidPreview                           │  details
+│ File: composeApp/src/androidMain/.../MainActivity.kt:41                     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ⚠ sources changed since last build — press 'i' to install                  │  status
+├──────────────────────────────────────────────────────────────────────────────┤
+│ enter run · s screenshot · w web · i install · / filter · d device · q quit │  help
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key bindings
@@ -111,10 +113,14 @@ compose-preview /path/to/android/project
 |-----|--------|
 | `/` | Focus search bar — type to filter previews live |
 | `Tab` | Exit search / switch between Modules and Previews panels |
-| `Enter` | Run selected preview on device (or confirm search) |
+| `Enter` | Run selected preview on device (auto-captures screenshot) |
 | `Esc` | Clear filter and exit search |
 | `j/k` or `↑/↓` | Navigate items in focused panel |
-| `b` | Build & install debug APK (auto-detects build variants) |
+| `s` | Capture screenshot of the selected preview |
+| `w` | Toggle HD web preview viewer in browser |
+| `i` | Install APK via Gradle (auto-detects build variants) |
+| `d` | Open device / emulator picker |
+| `R` | Refresh project scan |
 | `1` / `2` | Focus Modules / Previews panel directly |
 | `q` | Quit |
 | Mouse click | Select item in any panel |
@@ -138,15 +144,35 @@ Press `/` to activate the search bar. As you type, previews are filtered across 
 
 Module counts update to show only matching previews. Press `Tab` to move to the panels with the filter active, or `Esc` to clear it.
 
-### Build variants
+### Screenshots
 
-When you press `b`, compose-preview queries Gradle for all available install tasks. If your project has multiple build variants (dev, qa, accept, production), you get a quick-select prompt:
+Press `s` to capture a screenshot of the selected preview. The screenshot is rendered directly in the terminal using half-block characters. Screenshots are cached — a dot marker (`◉`) next to a preview name indicates a cached screenshot.
+
+Running a preview with `Enter` also auto-captures a screenshot after a short delay.
+
+### HD Web Preview
+
+The terminal screenshot is low resolution. For full-quality rendering, press `w` to start a local web viewer. This opens your browser with an HD version of the preview, served from a local web server. Press `w` again to stop the server.
+
+### Device / Emulator picker
+
+Press `d` to open a modal listing connected devices and available AVD emulators. Select a device to target, or pick an emulator to launch it.
+
+### Install variants
+
+When you press `i`, compose-preview queries Gradle for all available install tasks. If your project has multiple build variants (dev, qa, accept, production), a picker modal appears:
 
 ```
-Build variant: [D]evDebug [A]cceptDebug [Q]aDebug [P]roductionDebug
+╭ Select Install Task ─────────────╮
+│ ▸ installDevDebug                │
+│   installAcceptDebug             │
+│   installQaDebug                 │
+│   installProductionDebug         │
+│ ↑↓ navigate · enter select · esc │
+╰──────────────────────────────────╯
 ```
 
-Press the highlighted letter to select. The choice is remembered for subsequent builds.
+Select a task with `Enter`. The choice is remembered for subsequent installs.
 
 ## Requirements
 
