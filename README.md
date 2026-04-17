@@ -57,7 +57,7 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 
 ```bash
 brew tap ignaciotcrespo/tap
-brew install compose-preview
+brew install compose-preview-cli
 ```
 
 ### Go
