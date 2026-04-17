@@ -125,7 +125,7 @@ type Model struct {
 	// Prompt
 	prompt prompt.Prompt
 
-	// Electron mode: hide screenshot panel, Electron shows it
+	// Web mode: hide screenshot panel, browser shows HD preview
 	electronMode bool
 
 	// Panel regions for mouse click detection
