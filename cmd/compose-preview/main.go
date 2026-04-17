@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,14 +26,17 @@ func main() {
 		return
 	}
 
-	// Check for --web and --port flags
+	// Check for flags
 	webMode := false
+	listMode := false
 	webPort := 9999
 	args := []string{}
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--web" || arg == "-w" {
 			webMode = true
+		} else if arg == "--list" || arg == "-l" {
+			listMode = true
 		} else if (arg == "--port" || arg == "-p") && i+1 < len(os.Args) {
 			i++
 			p, err := strconv.Atoi(os.Args[i])
@@ -67,6 +71,11 @@ func main() {
 
 	if webMode {
 		runWebMode(root, webPort)
+		return
+	}
+
+	if listMode {
+		runListMode(root)
 		return
 	}
 
@@ -121,4 +130,34 @@ func runWebMode(root string, port int) {
 	// Keep running until Ctrl+C
 	fmt.Fprintf(os.Stderr, "Press Ctrl+C to stop\n")
 	select {}
+}
+
+func runListMode(root string) {
+	result := scanner.Scan(root)
+
+	type previewEntry struct {
+		Module   string `json:"module"`
+		Function string `json:"function"`
+		FQN      string `json:"fqn"`
+		File     string `json:"file"`
+		Line     int    `json:"line"`
+		Name     string `json:"name,omitempty"`
+	}
+
+	var entries []previewEntry
+	for _, p := range result.AllPreviews {
+		rel, _ := filepath.Rel(root, p.FilePath)
+		entries = append(entries, previewEntry{
+			Module:   p.Module,
+			Function: p.FunctionName,
+			FQN:      p.FQN,
+			File:     rel,
+			Line:     p.LineNumber,
+			Name:     p.PreviewName,
+		})
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(entries)
 }

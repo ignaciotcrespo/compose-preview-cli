@@ -84,6 +84,9 @@ compose-preview --web
 
 # Web preview on a custom port (default: 9999):
 compose-preview --web --port 8080
+
+# List all previews as JSON (for scripting/CI):
+compose-preview --list
 ```
 
 ### Layout
