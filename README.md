@@ -87,6 +87,15 @@ compose-preview --web --port 8080
 
 # List all previews as JSON (for scripting/CI):
 compose-preview --list
+
+# Run a specific preview on a connected device:
+compose-preview --run SplashScreenPreview
+
+# Take a screenshot of a preview (saves to preview.png):
+compose-preview --screenshot SplashScreenPreview
+
+# Custom output file and delay (default: 3s):
+compose-preview --screenshot SplashScreenPreview --output splash.png --delay 5
 ```
 
 ### Layout
