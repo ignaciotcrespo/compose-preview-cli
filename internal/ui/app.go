@@ -16,6 +16,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/gradle"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/scanner"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/types"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/server"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/panel"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/prompt"
@@ -83,6 +84,7 @@ type Model struct {
 	modules     []scanner.Module
 	projectRoot string
 	appId       string // applicationId from the app module (for ADB launch)
+	webServer   *server.Server // nil until started by 'w'
 
 	// Device / Emulator
 	deviceStatus   string
@@ -398,6 +400,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devicePickerItems = m.buildPickerItems()
 			m.devicePickerSel = 0
 			m.showDevicePicker = true
+			return m, nil
+		}
+
+		// "w" toggles web preview viewer
+		if key == "w" {
+			if m.webServer == nil {
+				// Start server
+				goBinary, _ := os.Executable()
+				m.webServer = server.New(9999, goBinary, m.projectRoot)
+				port, err := m.webServer.Start()
+				if err != nil {
+					m.errorMsg = fmt.Sprintf("Server error: %v", err)
+					m.webServer = nil
+				} else {
+					url := fmt.Sprintf("http://localhost:%d", port)
+					m.statusMsg = fmt.Sprintf("Web viewer: %s", url)
+					// Open browser
+					var cmd *exec.Cmd
+					switch runtime.GOOS {
+					case "darwin":
+						cmd = exec.Command("open", url)
+					case "windows":
+						cmd = exec.Command("cmd", "/c", "start", url)
+					default:
+						cmd = exec.Command("xdg-open", url)
+					}
+					cmd.Start()
+				}
+			} else {
+				// Stop server
+				m.webServer.Stop()
+				m.webServer = nil
+				m.statusMsg = "Web viewer stopped"
+			}
 			return m, nil
 		}
 

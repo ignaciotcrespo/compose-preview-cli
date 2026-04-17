@@ -1,21 +1,22 @@
-// Package screenshot manages a cache of device screenshots keyed by composable FQN.
+// Package screenshot manages a disk-backed cache of device screenshots keyed by composable FQN.
+// Multiple instances of compose-preview share the same cache on disk.
 package screenshot
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
-// SharedDir is the directory where screenshots are written for external viewers.
+// SharedDir is the directory where screenshots are stored.
 var SharedDir = filepath.Join(os.TempDir(), "compose-preview")
 
 // Entry is a cached screenshot.
 type Entry struct {
-	PNGData   []byte
+	PNGData    []byte
 	CapturedAt time.Time
 }
 
@@ -32,45 +33,55 @@ func (e *Entry) Age() string {
 	}
 }
 
-// Cache stores screenshots keyed by composable FQN.
+// Cache stores screenshots on disk keyed by FQN.
 type Cache struct {
-	mu      sync.RWMutex
-	entries map[string]*Entry
+	dir string
 }
 
-// NewCache creates a new screenshot cache.
+// NewCache creates a new disk-backed screenshot cache.
 func NewCache() *Cache {
-	return &Cache{entries: make(map[string]*Entry)}
+	dir := filepath.Join(SharedDir, "screenshots")
+	os.MkdirAll(dir, 0755)
+	return &Cache{dir: dir}
+}
+
+// fqnToFile converts a FQN to a safe filename.
+func fqnToFile(fqn string) string {
+	h := sha256.Sum256([]byte(fqn))
+	return fmt.Sprintf("%x.png", h[:8])
 }
 
 // Get returns the cached screenshot for the given FQN, or nil if not found.
 func (c *Cache) Get(fqn string) *Entry {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.entries[fqn]
+	path := filepath.Join(c.dir, fqnToFile(fqn))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	return &Entry{
+		PNGData:    data,
+		CapturedAt: info.ModTime(),
+	}
 }
 
-// Put stores a screenshot for the given FQN and writes it to the shared directory.
+// Put stores a screenshot for the given FQN on disk and signals external viewers.
 func (c *Cache) Put(fqn string, pngData []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[fqn] = &Entry{
-		PNGData:    pngData,
-		CapturedAt: time.Now(),
-	}
-	// Write to shared dir for external viewers (Electron)
+	path := filepath.Join(c.dir, fqnToFile(fqn))
+	os.WriteFile(path, pngData, 0644)
 	writeShared(fqn, pngData)
 }
 
-// SignalSelection writes a state.json to notify external viewers of the current selection.
-// Called when navigating previews (even without a new screenshot).
+// SignalSelection writes state.json to notify external viewers of the current selection.
 func (c *Cache) SignalSelection(fqn string) {
 	entry := c.Get(fqn)
 	hasScreenshot := entry != nil
 	age := ""
 	if hasScreenshot {
 		age = entry.Age()
-		// Also write the cached PNG so Electron can show it
 		writeShared(fqn, entry.PNGData)
 	}
 
@@ -85,7 +96,7 @@ func (c *Cache) SignalSelection(fqn string) {
 	os.WriteFile(filepath.Join(SharedDir, "state.json"), data, 0644)
 }
 
-// SignalCapturing writes state.json with capturing=true to show loading state in Electron.
+// SignalCapturing writes state.json with capturing=true.
 func (c *Cache) SignalCapturing(fqn string) {
 	state := map[string]interface{}{
 		"fqn":           fqn,
