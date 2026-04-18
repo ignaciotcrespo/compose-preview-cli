@@ -888,33 +888,47 @@ func (m *Model) openScreenshotExternal() {
 
 // fullscreenPreview temporarily exits the TUI and shows the screenshot
 // fullscreen using the terminal's native graphics protocol.
+// Supports navigating between previews with up/down arrow keys.
 func (m *Model) fullscreenPreview() tea.Cmd {
 	previews := m.filteredPreviews()
-	if m.state.PreviewSel >= len(previews) {
+	if len(previews) == 0 {
 		return nil
 	}
-	fqn := previews[m.state.PreviewSel].FQN
-	entry := m.screenshotCache.Get(fqn)
-	if entry == nil {
-		m.errorMsg = "No screenshot cached — press 's' first"
-		return nil
-	}
-	name := previews[m.state.PreviewSel].FunctionName
-	return tea.Exec(&fullscreenImgCmd{pngData: entry.PNGData, name: name}, func(err error) tea.Msg {
+	return tea.Exec(&fullscreenImgCmd{
+		previews:  previews,
+		sel:       m.state.PreviewSel,
+		cache:     m.screenshotCache,
+		serial:    m.deviceSerial(),
+		appId:     m.appId,
+		delay:     m.screenshotDelay,
+	}, func(err error) tea.Msg {
 		return fullscreenDoneMsg{}
 	})
+}
+
+// deviceSerial returns the serial of the first connected device, or empty.
+func (m *Model) deviceSerial() string {
+	if len(m.devices) > 0 {
+		return m.devices[0].Serial
+	}
+	return ""
 }
 
 // fullscreenDoneMsg is sent when the fullscreen preview is dismissed.
 type fullscreenDoneMsg struct{}
 
-// fullscreenImgCmd implements tea.ExecCommand to display an image fullscreen.
+// fullscreenImgCmd implements tea.ExecCommand to display an image fullscreen
+// with interactive navigation between previews.
 type fullscreenImgCmd struct {
-	pngData []byte
-	name    string
-	stdin   io.Reader
-	stdout  io.Writer
-	stderr  io.Writer
+	previews []scanner.PreviewFunc
+	sel      int
+	cache    *screenshot.Cache
+	serial   string
+	appId    string
+	delay    time.Duration
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 func (c *fullscreenImgCmd) SetStdin(r io.Reader)  { c.stdin = r }
@@ -922,30 +936,115 @@ func (c *fullscreenImgCmd) SetStdout(w io.Writer)  { c.stdout = w }
 func (c *fullscreenImgCmd) SetStderr(w io.Writer)  { c.stderr = w }
 
 func (c *fullscreenImgCmd) Run() error {
+	f, ok := c.stdin.(*os.File)
+	if !ok {
+		return nil
+	}
+	oldState, err := makeRaw(f.Fd())
+	if err != nil {
+		return nil
+	}
+	defer restoreTerminal(f.Fd(), oldState)
+
 	proto := imgrender.DetectGraphics()
+	sel := c.sel
+
+	for {
+		c.renderFullscreen(proto, sel)
+
+		// Read key input
+		key := readKey(f)
+		switch key {
+		case "up":
+			if sel > 0 {
+				sel--
+			}
+		case "down":
+			if sel < len(c.previews)-1 {
+				sel++
+			}
+		default:
+			// Any other key exits fullscreen
+			return nil
+		}
+	}
+}
+
+func (c *fullscreenImgCmd) renderFullscreen(proto imgrender.Protocol, sel int) {
+	w, h := imgrender.TerminalSize(c.stdout)
+	p := c.previews[sel]
 
 	// Clear screen
 	fmt.Fprint(c.stdout, "\033[2J\033[H")
 
 	// Title bar
-	title := fmt.Sprintf(" %s — %s (press any key to return)", c.name, proto.Name())
+	title := fmt.Sprintf(" %s (%d/%d) — ↑↓ navigate · any key to return",
+		p.FunctionName, sel+1, len(c.previews))
 	fmt.Fprintln(c.stdout, title)
 	fmt.Fprintln(c.stdout)
 
-	// Render image using full terminal width, leaving room for title
-	w, h := imgrender.TerminalSize(c.stdout)
-	rendered := proto.Render(c.pngData, w, h-3)
-	fmt.Fprint(c.stdout, rendered)
+	// Check cache
+	entry := c.cache.Get(p.FQN)
+	if entry != nil {
+		rendered := proto.Render(entry.PNGData, w, h-3)
+		fmt.Fprint(c.stdout, rendered)
+		return
+	}
 
-	// Wait for any key — put stdin in raw mode so we don't need enter
-	if f, ok := c.stdin.(*os.File); ok {
-		if oldState, err := makeRaw(f.Fd()); err == nil {
-			buf := make([]byte, 1)
-			f.Read(buf)
-			restoreTerminal(f.Fd(), oldState)
+	// Not cached — try to capture
+	if c.serial == "" {
+		fmt.Fprint(c.stdout, "  No device connected")
+		return
+	}
+
+	fmt.Fprint(c.stdout, "  Capturing screenshot...")
+
+	// Launch and capture
+	packages := adb.FindInstalledPackage(c.serial, c.appId)
+	for _, pkg := range packages {
+		if err := adb.LaunchPreview(c.serial, pkg, p.FQN, false); err == nil {
+			break
 		}
 	}
-	return nil
+	time.Sleep(c.delay)
+	data, err := adb.CaptureScreenshot(c.serial)
+	if err != nil {
+		fmt.Fprint(c.stdout, "\n  Capture failed: "+err.Error())
+		return
+	}
+
+	c.cache.Put(p.FQN, data)
+
+	// Clear and redraw with the image
+	fmt.Fprint(c.stdout, "\033[2J\033[H")
+	fmt.Fprintln(c.stdout, fmt.Sprintf(" %s (%d/%d) — ↑↓ navigate · any key to return",
+		p.FunctionName, sel+1, len(c.previews)))
+	fmt.Fprintln(c.stdout)
+	rendered := proto.Render(data, w, h-3)
+	fmt.Fprint(c.stdout, rendered)
+}
+
+// readKey reads a single key or escape sequence from the terminal in raw mode.
+// Returns "up", "down", or the raw character string.
+func readKey(f *os.File) string {
+	buf := make([]byte, 3)
+	n, err := f.Read(buf)
+	if err != nil || n == 0 {
+		return "q"
+	}
+	if n == 1 {
+		return string(buf[0])
+	}
+	// Escape sequences: ESC [ A (up), ESC [ B (down)
+	if n >= 3 && buf[0] == 0x1b && buf[1] == '[' {
+		switch buf[2] {
+		case 'A':
+			return "up"
+		case 'B':
+			return "down"
+		}
+	}
+	return string(buf[:n])
 }
 
 // makeRaw puts the terminal into raw mode and returns the previous state.
