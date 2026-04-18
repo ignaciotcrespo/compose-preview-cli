@@ -8,9 +8,7 @@ import (
 	"strings"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1047,29 +1045,7 @@ func readKey(f *os.File) string {
 	return string(buf[:n])
 }
 
-// makeRaw puts the terminal into raw mode and returns the previous state.
-func makeRaw(fd uintptr) (syscall.Termios, error) {
-	var oldState syscall.Termios
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCGETA), uintptr(unsafe.Pointer(&oldState)), 0, 0, 0); err != 0 {
-		return oldState, err
-	}
-	newState := oldState
-	newState.Lflag &^= syscall.ICANON | syscall.ECHO
-	newState.Cc[syscall.VMIN] = 1
-	newState.Cc[syscall.VTIME] = 0
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&newState)), 0, 0, 0); err != 0 {
-		return oldState, err
-	}
-	return oldState, nil
-}
-
-// restoreTerminal restores the terminal to the given state.
-func restoreTerminal(fd uintptr, state syscall.Termios) {
-	syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&state)), 0, 0, 0)
-}
+// makeRaw and restoreTerminal are in terminal_darwin.go / terminal_linux.go
 
 // captureScreenshot takes a screenshot of the current preview.
 func (m *Model) captureScreenshot() tea.Cmd {

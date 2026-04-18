@@ -9,9 +9,6 @@ import (
 	"image"
 	_ "image/png"
 	"io"
-	"os"
-	"syscall"
-	"unsafe"
 
 	"golang.org/x/image/draw"
 )
@@ -55,25 +52,9 @@ func IsGraphicsProtocol() bool {
 
 // TerminalSize returns the terminal width and height from the given writer,
 // falling back to 80x24 if detection fails.
+// Implementation is in termsize_unix.go / termsize_windows.go.
 func TerminalSize(w io.Writer) (int, int) {
-	fd := uintptr(syscall.Stdout)
-	if f, ok := w.(*os.File); ok {
-		fd = f.Fd()
-	}
-	type winsize struct {
-		Row, Col, Xpixel, Ypixel uint16
-	}
-	var ws winsize
-	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
-	width, height := int(ws.Col), int(ws.Row)
-	if width <= 0 {
-		width = 80
-	}
-	if height <= 0 {
-		height = 24
-	}
-	return width, height
+	return terminalSize(w)
 }
 
 // resizeImage decodes PNG data and scales it to fit within the given pixel dimensions,
