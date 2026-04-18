@@ -18,6 +18,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/scanner"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/server"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
 )
 
 // version is set by goreleaser via ldflags.
@@ -299,6 +300,11 @@ func runScreenshotMode(root, query, output string, delay int) {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "Screenshot saved to %s\n", output)
+
+	// Display inline using the best available terminal graphics protocol
+	proto := imgrender.DetectGraphics()
+	w, h := imgrender.TerminalSize(os.Stdout)
+	fmt.Print(proto.Render(png, w, h))
 }
 
 func findAppApplicationId(modules []scanner.Module, projectRoot string) (string, string) {

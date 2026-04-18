@@ -2,11 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -267,6 +270,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.needsBuild, m.buildWarning = gradle.NeedsBuild(m.appModulePath, m.projectRoot)
 		return m, nil
 
+	case fullscreenDoneMsg:
+		return m, nil
+
 	case screenshotMsg:
 		m.capturing = false
 		if msg.err != nil {
@@ -496,6 +502,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "o" {
 			m.openScreenshotExternal()
 			return m, nil
+		}
+
+		// "f" shows the screenshot fullscreen using the terminal's native graphics protocol
+		if key == "f" {
+			return m, m.fullscreenPreview()
 		}
 
 		// "/" activates search bar
@@ -832,6 +843,92 @@ func (m *Model) openScreenshotExternal() {
 	}
 	cmd.Start()
 	m.statusMsg = fmt.Sprintf("Opened: %s", tmpFile)
+}
+
+// fullscreenPreview temporarily exits the TUI and shows the screenshot
+// fullscreen using the terminal's native graphics protocol.
+func (m *Model) fullscreenPreview() tea.Cmd {
+	previews := m.filteredPreviews()
+	if m.state.PreviewSel >= len(previews) {
+		return nil
+	}
+	fqn := previews[m.state.PreviewSel].FQN
+	entry := m.screenshotCache.Get(fqn)
+	if entry == nil {
+		m.errorMsg = "No screenshot cached — press 's' first"
+		return nil
+	}
+	name := previews[m.state.PreviewSel].FunctionName
+	return tea.Exec(&fullscreenImgCmd{pngData: entry.PNGData, name: name}, func(err error) tea.Msg {
+		return fullscreenDoneMsg{}
+	})
+}
+
+// fullscreenDoneMsg is sent when the fullscreen preview is dismissed.
+type fullscreenDoneMsg struct{}
+
+// fullscreenImgCmd implements tea.ExecCommand to display an image fullscreen.
+type fullscreenImgCmd struct {
+	pngData []byte
+	name    string
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
+func (c *fullscreenImgCmd) SetStdin(r io.Reader)  { c.stdin = r }
+func (c *fullscreenImgCmd) SetStdout(w io.Writer)  { c.stdout = w }
+func (c *fullscreenImgCmd) SetStderr(w io.Writer)  { c.stderr = w }
+
+func (c *fullscreenImgCmd) Run() error {
+	proto := imgrender.DetectGraphics()
+
+	// Clear screen
+	fmt.Fprint(c.stdout, "\033[2J\033[H")
+
+	// Title bar
+	title := fmt.Sprintf(" %s — %s (press any key to return)", c.name, proto.Name())
+	fmt.Fprintln(c.stdout, title)
+	fmt.Fprintln(c.stdout)
+
+	// Render image using full terminal width, leaving room for title
+	w, h := imgrender.TerminalSize(c.stdout)
+	rendered := proto.Render(c.pngData, w, h-3)
+	fmt.Fprint(c.stdout, rendered)
+
+	// Wait for any key — put stdin in raw mode so we don't need enter
+	if f, ok := c.stdin.(*os.File); ok {
+		if oldState, err := makeRaw(f.Fd()); err == nil {
+			buf := make([]byte, 1)
+			f.Read(buf)
+			restoreTerminal(f.Fd(), oldState)
+		}
+	}
+	return nil
+}
+
+// makeRaw puts the terminal into raw mode and returns the previous state.
+func makeRaw(fd uintptr) (syscall.Termios, error) {
+	var oldState syscall.Termios
+	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
+		uintptr(syscall.TIOCGETA), uintptr(unsafe.Pointer(&oldState)), 0, 0, 0); err != 0 {
+		return oldState, err
+	}
+	newState := oldState
+	newState.Lflag &^= syscall.ICANON | syscall.ECHO
+	newState.Cc[syscall.VMIN] = 1
+	newState.Cc[syscall.VTIME] = 0
+	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
+		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&newState)), 0, 0, 0); err != 0 {
+		return oldState, err
+	}
+	return oldState, nil
+}
+
+// restoreTerminal restores the terminal to the given state.
+func restoreTerminal(fd uintptr, state syscall.Termios) {
+	syscall.Syscall6(syscall.SYS_IOCTL, fd,
+		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&state)), 0, 0, 0)
 }
 
 // captureScreenshot takes a screenshot of the current preview.

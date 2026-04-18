@@ -8,6 +8,10 @@ import (
 	"bytes"
 	"image"
 	_ "image/png"
+	"io"
+	"os"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/image/draw"
 )
@@ -34,6 +38,42 @@ func Render(pngData []byte, width, height int) string {
 // ProtocolName returns the name of the active rendering protocol.
 func ProtocolName() string {
 	return active.Name()
+}
+
+// IsGraphicsProtocol returns true if the active protocol uses terminal graphics
+// escape sequences (Kitty, iTerm2) that would be corrupted by lipgloss processing.
+// When true, callers should place the rendered output directly into the view
+// without passing it through lipgloss styling functions.
+func IsGraphicsProtocol() bool {
+	switch active.(type) {
+	case *kittyProtocol, *iterm2Protocol:
+		return true
+	default:
+		return false
+	}
+}
+
+// TerminalSize returns the terminal width and height from the given writer,
+// falling back to 80x24 if detection fails.
+func TerminalSize(w io.Writer) (int, int) {
+	fd := uintptr(syscall.Stdout)
+	if f, ok := w.(*os.File); ok {
+		fd = f.Fd()
+	}
+	type winsize struct {
+		Row, Col, Xpixel, Ypixel uint16
+	}
+	var ws winsize
+	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, fd,
+		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	width, height := int(ws.Col), int(ws.Row)
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	return width, height
 }
 
 // resizeImage decodes PNG data and scales it to fit within the given pixel dimensions,

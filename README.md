@@ -35,7 +35,7 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 │ Params: showBackground=true, backgroundColor=0xFF111111                            │
 ╰─────────────────────────────────────────────────────────────────────────────────────╯
  ● Launched: LoginScreenEmptyDarkPreview (com.example.app.dev)
- enter run · s screenshot · w web · i install · / filter · d device · q quit
+ enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · q quit
 ```
 
 ## What it does
@@ -45,6 +45,7 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 - **Search** — Live filter bar (`/`) matches preview names across all modules, counts update in real time
 - **Run** — Launch any preview on a connected device via ADB with `Enter`
 - **Screenshot** — Capture a preview screenshot (`s`) displayed directly in the terminal
+- **Fullscreen Preview** — Press `f` to view the screenshot fullscreen using your terminal's native graphics protocol (Kitty, iTerm2, WezTerm, Ghostty)
 - **HD Web Preview** — Press `w` to open a local web viewer in your browser with full-quality preview rendering
 - **Install** — Trigger Gradle install tasks (`i`) with automatic variant detection (dev, qa, accept, production)
 - **Device / Emulator picker** — Press `d` to select a connected device or launch an AVD emulator
@@ -121,7 +122,7 @@ compose-preview --screenshot SplashScreenPreview --output splash.png --delay 5
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ ⚠ sources changed since last build — press 'i' to install                  │  status
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ enter run · s screenshot · w web · i install · / filter · d device · q quit │  help
+│ enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · q quit │  help
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -135,6 +136,7 @@ compose-preview --screenshot SplashScreenPreview --output splash.png --delay 5
 | `Esc` | Clear filter and exit search |
 | `j/k` or `↑/↓` | Navigate items in focused panel |
 | `s` | Capture screenshot of the selected preview |
+| `f` | View screenshot fullscreen with native terminal graphics (Kitty/iTerm2/Ghostty/WezTerm) |
 | `w` | Toggle HD web preview viewer in browser |
 | `i` | Install APK via Gradle (auto-detects build variants) |
 | `d` | Open device / emulator picker |
@@ -167,6 +169,10 @@ Module counts update to show only matching previews. Press `Tab` to move to the 
 Press `s` to capture a screenshot of the selected preview. The screenshot is rendered directly in the terminal using half-block characters. Screenshots are cached — a dot marker (`◉`) next to a preview name indicates a cached screenshot.
 
 Running a preview with `Enter` also auto-captures a screenshot after a short delay.
+
+Press `f` to view the screenshot **fullscreen** using your terminal's native graphics protocol for pixel-perfect quality. Supported terminals: Kitty, iTerm2, WezTerm, Ghostty. Other terminals fall back to half-block rendering. Press any key to return to the TUI.
+
+The `--screenshot` CLI command also displays the image inline using the native graphics protocol.
 
 ### HD Web Preview
 
