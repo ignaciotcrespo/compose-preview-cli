@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -118,8 +119,11 @@ type Model struct {
 	// Screenshot cache and rendered preview
 	screenshotCache *screenshot.Cache
 	renderedPreview string // current rendered half-block image
+	previewErrors   map[string]string // FQN → crash error message
 	previewFQN      string // FQN of the currently rendered preview
 	capturing       bool   // screenshot capture in progress
+	dismissDialog   bool   // send key events to dismiss compatibility dialog
+	screenshotDelay time.Duration // wait time before capturing screenshot
 
 	// Search bar (always visible at top)
 	searchInput  textinput.Model
@@ -135,8 +139,14 @@ type Model struct {
 	panelRegions map[types.PanelID]panel.Region
 }
 
+// Options configures optional TUI behavior.
+type Options struct {
+	DismissDialog   bool          // send key events to dismiss compatibility dialog after launch
+	ScreenshotDelay time.Duration // wait time before capturing screenshot (default 3s)
+}
+
 // NewModel creates the initial model from scan results.
-func NewModel(result scanner.ScanResult, projectRoot string) Model {
+func NewModel(result scanner.ScanResult, projectRoot string, opts ...Options) Model {
 	// Filter out modules with no previews for display, but keep all
 	var modulesWithPreviews []scanner.Module
 	for _, m := range result.Modules {
@@ -187,6 +197,14 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	si.Placeholder = "type to filter previews..."
 	si.CharLimit = 100
 
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.ScreenshotDelay == 0 {
+		opt.ScreenshotDelay = 3 * time.Second
+	}
+
 	m := Model{
 		electronMode:     os.Getenv("COMPOSE_PREVIEW_ELECTRON") == "1",
 		state:            controller.NewState(),
@@ -200,6 +218,9 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 		needsBuild:       needsBuild,
 		buildWarning:     buildWarning,
 		screenshotCache:  screenshot.NewCache(),
+		previewErrors:    make(map[string]string),
+		dismissDialog:    opt.DismissDialog,
+		screenshotDelay:  opt.ScreenshotDelay,
 		searchInput:      si,
 		avds:             avds,
 		showDevicePicker: showPicker,
@@ -276,8 +297,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenshotMsg:
 		m.capturing = false
 		if msg.err != nil {
-			m.errorMsg = fmt.Sprintf("Screenshot failed: %v", msg.err)
+			m.previewErrors[msg.fqn] = msg.err.Error()
 		} else {
+			delete(m.previewErrors, msg.fqn)
 			m.screenshotCache.Put(msg.fqn, msg.pngData)
 			m.previewFQN = msg.fqn
 			// Render will pick it up from the cache
@@ -619,7 +641,7 @@ func (m *Model) launchPreview() tea.Cmd {
 		// Try each installed variant until one works
 		var lastErr error
 		for _, pkg := range packages {
-			err := adb.LaunchPreview(serial, pkg, fqn)
+			err := adb.LaunchPreview(serial, pkg, fqn, m.dismissDialog)
 			if err == nil {
 				return adbLaunchMsg{preview: p.FunctionName + " (" + pkg + ")"}
 			}
@@ -799,6 +821,22 @@ func (m *Model) clickItem(pid types.PanelID, row int) {
 	}
 }
 
+// wordWrap breaks long lines at the given width, preserving existing newlines.
+func wordWrap(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	var result strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		for len(line) > width {
+			result.WriteString("  " + line[:width] + "\n")
+			line = line[width:]
+		}
+		result.WriteString("  " + line + "\n")
+	}
+	return strings.TrimRight(result.String(), "\n")
+}
+
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -967,8 +1005,11 @@ func (m *Model) delayedScreenshotCapture() tea.Cmd {
 	m.screenshotCache.SignalCapturing(fqn)
 
 	return func() tea.Msg {
-		// Wait for the preview to render on device
-		time.Sleep(2 * time.Second)
+		// Check for crashes while waiting for the preview to render
+		crash := adb.CheckPreviewCrash(serial, "", m.screenshotDelay)
+		if crash != "" {
+			return screenshotMsg{fqn: fqn, err: fmt.Errorf("%s", crash)}
+		}
 		data, err := adb.CaptureScreenshot(serial)
 		return screenshotMsg{fqn: fqn, pngData: data, err: err}
 	}
@@ -985,6 +1026,12 @@ func (m Model) currentPreviewScreenshot(width, height int) (string, string) {
 
 	if m.capturing && fqn == m.previewFQN {
 		return "  Capturing...", ""
+	}
+
+	// Show crash error in the preview panel if the preview failed
+	if errMsg, ok := m.previewErrors[fqn]; ok {
+		wrapped := wordWrap(errMsg, width-4)
+		return errorStyle.Render("  Preview crashed:\n\n" + wrapped), ""
 	}
 
 	entry := m.screenshotCache.Get(fqn)

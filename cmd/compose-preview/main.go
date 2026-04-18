@@ -33,6 +33,7 @@ func main() {
 	// Check for flags
 	webMode := false
 	listMode := false
+	dismissDialog := false
 	runPreview := ""
 	screenshotPreview := ""
 	screenshotOutput := "preview.png"
@@ -62,6 +63,8 @@ func main() {
 				os.Exit(1)
 			}
 			screenshotDelay = d
+		} else if arg == "--dismiss-dialog" {
+			dismissDialog = true
 		} else if (arg == "--port" || arg == "-p") && i+1 < len(os.Args) {
 			i++
 			p, err := strconv.Atoi(os.Args[i])
@@ -125,7 +128,10 @@ func main() {
 	}
 
 	// Launch TUI
-	model := ui.NewModel(result, root)
+	model := ui.NewModel(result, root, ui.Options{
+		DismissDialog:   dismissDialog,
+		ScreenshotDelay: time.Duration(screenshotDelay) * time.Second,
+	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -268,7 +274,7 @@ func resolvePreview(root, query string) resolvedPreview {
 func launchPreview(r resolvedPreview) {
 	fmt.Fprintf(os.Stderr, "Launching %s on %s...\n", r.preview.FunctionName, r.serial)
 	for _, pkg := range r.packages {
-		if err := adb.LaunchPreview(r.serial, pkg, r.preview.FQN); err == nil {
+		if err := adb.LaunchPreview(r.serial, pkg, r.preview.FQN, false); err == nil {
 			fmt.Fprintf(os.Stderr, "Launched: %s (%s)\n", r.preview.FunctionName, pkg)
 			return
 		}

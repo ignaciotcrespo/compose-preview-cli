@@ -1,10 +1,12 @@
 package adb
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Device represents a connected Android device.
@@ -155,7 +157,8 @@ func CaptureScreenshot(serial string) ([]byte, error) {
 
 // LaunchPreview starts PreviewActivity on the device with the given composable FQN.
 // It force-stops the app first to ensure the new preview is rendered fresh.
-func LaunchPreview(serial, appPackage, composableFQN string) error {
+// If dismissDialog is true, it sends key events to dismiss the "built for older Android" dialog.
+func LaunchPreview(serial, appPackage, composableFQN string, dismissDialog bool) error {
 	// Force-stop the app so PreviewActivity restarts with the new composable
 	exec.Command("adb", "-s", serial, "shell", "am", "force-stop", appPackage).Run()
 
@@ -176,5 +179,94 @@ func LaunchPreview(serial, appPackage, composableFQN string) error {
 	if strings.Contains(outStr, "Error") {
 		return fmt.Errorf("%s", strings.TrimSpace(outStr))
 	}
+
+	if dismissDialog {
+		// Dismiss "built for an older version of Android" dialog if it appears.
+		// Send two ENTERs: first focuses the OK button, second confirms it.
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			exec.Command("adb", "-s", serial, "shell", "input", "keyevent", "KEYCODE_ENTER").Run()
+			time.Sleep(200 * time.Millisecond)
+			exec.Command("adb", "-s", serial, "shell", "input", "keyevent", "KEYCODE_ENTER").Run()
+		}()
+	}
+
 	return nil
+}
+
+// CheckPreviewCrash clears logcat, waits for the given duration, then checks
+// if the app crashed. Returns the crash message if found, or empty string.
+func CheckPreviewCrash(serial, appPackage string, wait time.Duration) string {
+	// Clear logcat before waiting
+	exec.Command("adb", "-s", serial, "logcat", "-c").Run()
+
+	time.Sleep(wait)
+
+	// Read logcat for crashes — filter by AndroidRuntime (crash tag) and the app package
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "logcat", "-d",
+		"-s", "AndroidRuntime:E")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	logcat := string(out)
+	if !strings.Contains(logcat, "FATAL EXCEPTION") {
+		return ""
+	}
+
+	// Find the deepest "Caused by:" line — that's the root cause.
+	// Also collect the line right after it (the first "at ..." gives context).
+	lines := strings.Split(logcat, "\n")
+	lastCausedBy := ""
+	lastCausedByNext := ""
+	for i, line := range lines {
+		cleaned := stripLogcatPrefix(line)
+		if strings.HasPrefix(cleaned, "Caused by:") {
+			lastCausedBy = cleaned
+			if i+1 < len(lines) {
+				lastCausedByNext = strings.TrimSpace(stripLogcatPrefix(lines[i+1]))
+			}
+		}
+	}
+
+	if lastCausedBy == "" {
+		// No "Caused by", use the main exception line
+		for _, line := range lines {
+			cleaned := stripLogcatPrefix(line)
+			if strings.Contains(cleaned, "Exception") || strings.Contains(cleaned, "Error") {
+				if !strings.Contains(cleaned, "FATAL EXCEPTION") && !strings.Contains(cleaned, "Process:") {
+					lastCausedBy = cleaned
+					break
+				}
+			}
+		}
+	}
+
+	if lastCausedBy == "" {
+		return ""
+	}
+
+	// Format: "ExceptionType: message"
+	// Strip the "Caused by: " prefix for cleaner display
+	result := strings.TrimPrefix(lastCausedBy, "Caused by: ")
+	if lastCausedByNext != "" && strings.HasPrefix(lastCausedByNext, "at ") {
+		result += "\n" + lastCausedByNext
+	}
+	return result
+}
+
+// stripLogcatPrefix removes the logcat metadata prefix from a line.
+// e.g. "04-18 01:43:02.095  4918  4918 E AndroidRuntime: actual message"
+// becomes "actual message"
+func stripLogcatPrefix(line string) string {
+	line = strings.TrimSpace(line)
+	// Logcat format: "date time pid tid level tag: message"
+	// The tag for crashes is "AndroidRuntime", look for that marker
+	if idx := strings.Index(line, "AndroidRuntime:"); idx >= 0 {
+		return strings.TrimSpace(line[idx+len("AndroidRuntime:"):])
+	}
+	return line
 }
