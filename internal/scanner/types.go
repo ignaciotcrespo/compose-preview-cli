@@ -14,9 +14,10 @@ type PreviewFunc struct {
 
 // Module represents a gradle module containing previews.
 type Module struct {
-	Name     string        // e.g. ":app"
-	Path     string        // absolute path to module root
-	Previews []PreviewFunc // previews found in this module
+	Name            string        // e.g. ":app"
+	Path            string        // absolute path to module root
+	Previews        []PreviewFunc // previews found in this module
+	ComposableCount int           // total @Composable functions (with and without @Preview)
 }
 
 // ScanResult holds the complete scan output.

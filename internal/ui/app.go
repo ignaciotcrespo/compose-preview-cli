@@ -5,11 +5,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,8 +117,11 @@ type Model struct {
 	// Screenshot cache and rendered preview
 	screenshotCache *screenshot.Cache
 	renderedPreview string // current rendered half-block image
+	previewErrors   map[string]string // FQN → crash error message
 	previewFQN      string // FQN of the currently rendered preview
 	capturing       bool   // screenshot capture in progress
+	dismissDialog   bool   // send key events to dismiss compatibility dialog
+	screenshotDelay time.Duration // wait time before capturing screenshot
 
 	// Search bar (always visible at top)
 	searchInput  textinput.Model
@@ -135,8 +137,14 @@ type Model struct {
 	panelRegions map[types.PanelID]panel.Region
 }
 
+// Options configures optional TUI behavior.
+type Options struct {
+	DismissDialog   bool          // send key events to dismiss compatibility dialog after launch
+	ScreenshotDelay time.Duration // wait time before capturing screenshot (default 3s)
+}
+
 // NewModel creates the initial model from scan results.
-func NewModel(result scanner.ScanResult, projectRoot string) Model {
+func NewModel(result scanner.ScanResult, projectRoot string, opts ...Options) Model {
 	// Filter out modules with no previews for display, but keep all
 	var modulesWithPreviews []scanner.Module
 	for _, m := range result.Modules {
@@ -187,6 +195,14 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 	si.Placeholder = "type to filter previews..."
 	si.CharLimit = 100
 
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.ScreenshotDelay == 0 {
+		opt.ScreenshotDelay = 1 * time.Second
+	}
+
 	m := Model{
 		electronMode:     os.Getenv("COMPOSE_PREVIEW_ELECTRON") == "1",
 		state:            controller.NewState(),
@@ -200,6 +216,9 @@ func NewModel(result scanner.ScanResult, projectRoot string) Model {
 		needsBuild:       needsBuild,
 		buildWarning:     buildWarning,
 		screenshotCache:  screenshot.NewCache(),
+		previewErrors:    make(map[string]string),
+		dismissDialog:    opt.DismissDialog,
+		screenshotDelay:  opt.ScreenshotDelay,
 		searchInput:      si,
 		avds:             avds,
 		showDevicePicker: showPicker,
@@ -276,8 +295,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenshotMsg:
 		m.capturing = false
 		if msg.err != nil {
-			m.errorMsg = fmt.Sprintf("Screenshot failed: %v", msg.err)
+			m.previewErrors[msg.fqn] = msg.err.Error()
 		} else {
+			delete(m.previewErrors, msg.fqn)
 			m.screenshotCache.Put(msg.fqn, msg.pngData)
 			m.previewFQN = msg.fqn
 			// Render will pick it up from the cache
@@ -616,10 +636,13 @@ func (m *Model) launchPreview() tea.Cmd {
 			}
 		}
 
+		// Clear logcat before launching so we can detect crashes afterwards
+		adb.ClearLogcat(serial)
+
 		// Try each installed variant until one works
 		var lastErr error
 		for _, pkg := range packages {
-			err := adb.LaunchPreview(serial, pkg, fqn)
+			err := adb.LaunchPreview(serial, pkg, fqn, m.dismissDialog)
 			if err == nil {
 				return adbLaunchMsg{preview: p.FunctionName + " (" + pkg + ")"}
 			}
@@ -799,6 +822,22 @@ func (m *Model) clickItem(pid types.PanelID, row int) {
 	}
 }
 
+// wordWrap breaks long lines at the given width, preserving existing newlines.
+func wordWrap(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	var result strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		for len(line) > width {
+			result.WriteString("  " + line[:width] + "\n")
+			line = line[width:]
+		}
+		result.WriteString("  " + line + "\n")
+	}
+	return strings.TrimRight(result.String(), "\n")
+}
+
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -847,33 +886,47 @@ func (m *Model) openScreenshotExternal() {
 
 // fullscreenPreview temporarily exits the TUI and shows the screenshot
 // fullscreen using the terminal's native graphics protocol.
+// Supports navigating between previews with up/down arrow keys.
 func (m *Model) fullscreenPreview() tea.Cmd {
 	previews := m.filteredPreviews()
-	if m.state.PreviewSel >= len(previews) {
+	if len(previews) == 0 {
 		return nil
 	}
-	fqn := previews[m.state.PreviewSel].FQN
-	entry := m.screenshotCache.Get(fqn)
-	if entry == nil {
-		m.errorMsg = "No screenshot cached — press 's' first"
-		return nil
-	}
-	name := previews[m.state.PreviewSel].FunctionName
-	return tea.Exec(&fullscreenImgCmd{pngData: entry.PNGData, name: name}, func(err error) tea.Msg {
+	return tea.Exec(&fullscreenImgCmd{
+		previews:  previews,
+		sel:       m.state.PreviewSel,
+		cache:     m.screenshotCache,
+		serial:    m.deviceSerial(),
+		appId:     m.appId,
+		delay:     m.screenshotDelay,
+	}, func(err error) tea.Msg {
 		return fullscreenDoneMsg{}
 	})
+}
+
+// deviceSerial returns the serial of the first connected device, or empty.
+func (m *Model) deviceSerial() string {
+	if len(m.devices) > 0 {
+		return m.devices[0].Serial
+	}
+	return ""
 }
 
 // fullscreenDoneMsg is sent when the fullscreen preview is dismissed.
 type fullscreenDoneMsg struct{}
 
-// fullscreenImgCmd implements tea.ExecCommand to display an image fullscreen.
+// fullscreenImgCmd implements tea.ExecCommand to display an image fullscreen
+// with interactive navigation between previews.
 type fullscreenImgCmd struct {
-	pngData []byte
-	name    string
-	stdin   io.Reader
-	stdout  io.Writer
-	stderr  io.Writer
+	previews []scanner.PreviewFunc
+	sel      int
+	cache    *screenshot.Cache
+	serial   string
+	appId    string
+	delay    time.Duration
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 func (c *fullscreenImgCmd) SetStdin(r io.Reader)  { c.stdin = r }
@@ -881,55 +934,118 @@ func (c *fullscreenImgCmd) SetStdout(w io.Writer)  { c.stdout = w }
 func (c *fullscreenImgCmd) SetStderr(w io.Writer)  { c.stderr = w }
 
 func (c *fullscreenImgCmd) Run() error {
+	f, ok := c.stdin.(*os.File)
+	if !ok {
+		return nil
+	}
+	oldState, err := makeRaw(f.Fd())
+	if err != nil {
+		return nil
+	}
+	defer restoreTerminal(f.Fd(), oldState)
+
 	proto := imgrender.DetectGraphics()
+	sel := c.sel
+
+	for {
+		c.renderFullscreen(proto, sel)
+
+		// Read key input
+		key := readKey(f)
+		switch key {
+		case "up":
+			if sel > 0 {
+				sel--
+			}
+		case "down":
+			if sel < len(c.previews)-1 {
+				sel++
+			}
+		default:
+			// Any other key exits fullscreen
+			return nil
+		}
+	}
+}
+
+func (c *fullscreenImgCmd) renderFullscreen(proto imgrender.Protocol, sel int) {
+	w, h := imgrender.TerminalSize(c.stdout)
+	p := c.previews[sel]
 
 	// Clear screen
 	fmt.Fprint(c.stdout, "\033[2J\033[H")
 
 	// Title bar
-	title := fmt.Sprintf(" %s — %s (press any key to return)", c.name, proto.Name())
+	title := fmt.Sprintf(" %s (%d/%d) — ↑↓ navigate · any key to return",
+		p.FunctionName, sel+1, len(c.previews))
 	fmt.Fprintln(c.stdout, title)
 	fmt.Fprintln(c.stdout)
 
-	// Render image using full terminal width, leaving room for title
-	w, h := imgrender.TerminalSize(c.stdout)
-	rendered := proto.Render(c.pngData, w, h-3)
-	fmt.Fprint(c.stdout, rendered)
+	// Check cache
+	entry := c.cache.Get(p.FQN)
+	if entry != nil {
+		rendered := proto.Render(entry.PNGData, w, h-3)
+		fmt.Fprint(c.stdout, rendered)
+		return
+	}
 
-	// Wait for any key — put stdin in raw mode so we don't need enter
-	if f, ok := c.stdin.(*os.File); ok {
-		if oldState, err := makeRaw(f.Fd()); err == nil {
-			buf := make([]byte, 1)
-			f.Read(buf)
-			restoreTerminal(f.Fd(), oldState)
+	// Not cached — try to capture
+	if c.serial == "" {
+		fmt.Fprint(c.stdout, "  No device connected")
+		return
+	}
+
+	fmt.Fprint(c.stdout, "  Capturing screenshot...")
+
+	// Launch and capture
+	packages := adb.FindInstalledPackage(c.serial, c.appId)
+	for _, pkg := range packages {
+		if err := adb.LaunchPreview(c.serial, pkg, p.FQN, false); err == nil {
+			break
 		}
 	}
-	return nil
+	time.Sleep(c.delay)
+	data, err := adb.CaptureScreenshot(c.serial)
+	if err != nil {
+		fmt.Fprint(c.stdout, "\n  Capture failed: "+err.Error())
+		return
+	}
+
+	c.cache.Put(p.FQN, data)
+
+	// Clear and redraw with the image
+	fmt.Fprint(c.stdout, "\033[2J\033[H")
+	fmt.Fprintln(c.stdout, fmt.Sprintf(" %s (%d/%d) — ↑↓ navigate · any key to return",
+		p.FunctionName, sel+1, len(c.previews)))
+	fmt.Fprintln(c.stdout)
+	rendered := proto.Render(data, w, h-3)
+	fmt.Fprint(c.stdout, rendered)
 }
 
-// makeRaw puts the terminal into raw mode and returns the previous state.
-func makeRaw(fd uintptr) (syscall.Termios, error) {
-	var oldState syscall.Termios
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCGETA), uintptr(unsafe.Pointer(&oldState)), 0, 0, 0); err != 0 {
-		return oldState, err
+// readKey reads a single key or escape sequence from the terminal in raw mode.
+// Returns "up", "down", or the raw character string.
+func readKey(f *os.File) string {
+	buf := make([]byte, 3)
+	n, err := f.Read(buf)
+	if err != nil || n == 0 {
+		return "q"
 	}
-	newState := oldState
-	newState.Lflag &^= syscall.ICANON | syscall.ECHO
-	newState.Cc[syscall.VMIN] = 1
-	newState.Cc[syscall.VTIME] = 0
-	if _, _, err := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&newState)), 0, 0, 0); err != 0 {
-		return oldState, err
+	if n == 1 {
+		return string(buf[0])
 	}
-	return oldState, nil
+	// Escape sequences: ESC [ A (up), ESC [ B (down)
+	if n >= 3 && buf[0] == 0x1b && buf[1] == '[' {
+		switch buf[2] {
+		case 'A':
+			return "up"
+		case 'B':
+			return "down"
+		}
+	}
+	return string(buf[:n])
 }
 
-// restoreTerminal restores the terminal to the given state.
-func restoreTerminal(fd uintptr, state syscall.Termios) {
-	syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TIOCSETA), uintptr(unsafe.Pointer(&state)), 0, 0, 0)
-}
+// makeRaw and restoreTerminal are in terminal_darwin.go / terminal_linux.go
 
 // captureScreenshot takes a screenshot of the current preview.
 func (m *Model) captureScreenshot() tea.Cmd {
@@ -966,9 +1082,16 @@ func (m *Model) delayedScreenshotCapture() tea.Cmd {
 	fqn := p.FQN
 	m.screenshotCache.SignalCapturing(fqn)
 
+	delay := m.screenshotDelay
 	return func() tea.Msg {
-		// Wait for the preview to render on device
-		time.Sleep(2 * time.Second)
+		// Wait for the preview to render (logcat was cleared before launch)
+		time.Sleep(delay)
+
+		// Check logcat for crashes (no extra wait, crash already happened if it will)
+		crash := adb.CheckPreviewCrash(serial)
+		if crash != "" {
+			return screenshotMsg{fqn: fqn, err: fmt.Errorf("%s", crash)}
+		}
 		data, err := adb.CaptureScreenshot(serial)
 		return screenshotMsg{fqn: fqn, pngData: data, err: err}
 	}
@@ -985,6 +1108,12 @@ func (m Model) currentPreviewScreenshot(width, height int) (string, string) {
 
 	if m.capturing && fqn == m.previewFQN {
 		return "  Capturing...", ""
+	}
+
+	// Show crash error in the preview panel if the preview failed
+	if errMsg, ok := m.previewErrors[fqn]; ok {
+		wrapped := wordWrap(errMsg, width-4)
+		return errorStyle.Render("  Preview crashed:\n\n" + wrapped), ""
 	}
 
 	entry := m.screenshotCache.Get(fqn)

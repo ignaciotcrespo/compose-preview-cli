@@ -19,6 +19,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/server"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/screenshot"
 )
 
 // version is set by goreleaser via ldflags.
@@ -33,10 +34,12 @@ func main() {
 	// Check for flags
 	webMode := false
 	listMode := false
+	clearCache := false
+	dismissDialog := false
 	runPreview := ""
 	screenshotPreview := ""
 	screenshotOutput := "preview.png"
-	screenshotDelay := 3
+	screenshotDelay := 1
 	webPort := 9999
 	args := []string{}
 	for i := 1; i < len(os.Args); i++ {
@@ -62,6 +65,10 @@ func main() {
 				os.Exit(1)
 			}
 			screenshotDelay = d
+		} else if arg == "--clear" {
+			clearCache = true
+		} else if arg == "--dismiss-dialog" {
+			dismissDialog = true
 		} else if (arg == "--port" || arg == "-p") && i+1 < len(os.Args) {
 			i++
 			p, err := strconv.Atoi(os.Args[i])
@@ -99,6 +106,16 @@ func main() {
 		return
 	}
 
+	if clearCache {
+		dir := screenshot.SharedDir
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error clearing cache: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Cleared screenshot cache: %s\n", dir)
+		return
+	}
+
 	if listMode {
 		runListMode(root)
 		return
@@ -120,12 +137,24 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Found %d previews across %d modules\n", len(result.AllPreviews), len(result.Modules))
 
 	if len(result.AllPreviews) == 0 {
-		fmt.Fprintf(os.Stderr, "No @Preview composables found.\n")
+		totalComposables := 0
+		for _, mod := range result.Modules {
+			totalComposables += mod.ComposableCount
+		}
+		if totalComposables > 0 {
+			fmt.Fprintf(os.Stderr, "No @Preview composables found, but %d @Composable functions exist.\n", totalComposables)
+			fmt.Fprintf(os.Stderr, "Add @Preview annotations to enable preview browsing.\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "No @Preview or @Composable functions found.\n")
+		}
 		os.Exit(0)
 	}
 
 	// Launch TUI
-	model := ui.NewModel(result, root)
+	model := ui.NewModel(result, root, ui.Options{
+		DismissDialog:   dismissDialog,
+		ScreenshotDelay: time.Duration(screenshotDelay) * time.Second,
+	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -268,7 +297,7 @@ func resolvePreview(root, query string) resolvedPreview {
 func launchPreview(r resolvedPreview) {
 	fmt.Fprintf(os.Stderr, "Launching %s on %s...\n", r.preview.FunctionName, r.serial)
 	for _, pkg := range r.packages {
-		if err := adb.LaunchPreview(r.serial, pkg, r.preview.FQN); err == nil {
+		if err := adb.LaunchPreview(r.serial, pkg, r.preview.FQN, false); err == nil {
 			fmt.Fprintf(os.Stderr, "Launched: %s (%s)\n", r.preview.FunctionName, pkg)
 			return
 		}

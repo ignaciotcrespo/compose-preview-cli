@@ -45,11 +45,13 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 - **Search** — Live filter bar (`/`) matches preview names across all modules, counts update in real time
 - **Run** — Launch any preview on a connected device via ADB with `Enter`
 - **Screenshot** — Capture a preview screenshot (`s`) displayed directly in the terminal
-- **Fullscreen Preview** — Press `f` to view the screenshot fullscreen using your terminal's native graphics protocol (Kitty, iTerm2, WezTerm, Ghostty)
+- **Fullscreen HD** — Press `f` to view the screenshot fullscreen using your terminal's native graphics protocol (Kitty, iTerm2, WezTerm, Ghostty), navigate between previews with `↑/↓`
+- **Crash detection** — Automatically detects when a preview crashes and shows the root cause error in the preview panel
 - **HD Web Preview** — Press `w` to open a local web viewer in your browser with full-quality preview rendering
 - **Install** — Trigger Gradle install tasks (`i`) with automatic variant detection (dev, qa, accept, production)
 - **Device / Emulator picker** — Press `d` to select a connected device or launch an AVD emulator
 - **Details** — See fully qualified name, file path, line number, and `@Preview` parameters
+- **Composable count** — Shows total `@Composable` functions per module, helping identify preview coverage gaps
 - **Stale detection** — Warns when source files are newer than the installed APK
 
 ## Install
@@ -95,8 +97,14 @@ compose-preview --run SplashScreenPreview
 # Take a screenshot of a preview (saves to preview.png):
 compose-preview --screenshot SplashScreenPreview
 
-# Custom output file and delay (default: 3s):
-compose-preview --screenshot SplashScreenPreview --output splash.png --delay 5
+# Custom output file and render delay (default: 1s):
+compose-preview --screenshot SplashScreenPreview --output splash.png --delay 3
+
+# Clear cached screenshots:
+compose-preview --clear
+
+# Dismiss "built for older Android" dialog automatically:
+compose-preview --dismiss-dialog
 ```
 
 ### Layout
@@ -136,7 +144,7 @@ compose-preview --screenshot SplashScreenPreview --output splash.png --delay 5
 | `Esc` | Clear filter and exit search |
 | `j/k` or `↑/↓` | Navigate items in focused panel |
 | `s` | Capture screenshot of the selected preview |
-| `f` | View screenshot fullscreen with native terminal graphics (Kitty/iTerm2/Ghostty/WezTerm) |
+| `f` | Fullscreen HD preview with native terminal graphics — `↑/↓` to navigate between previews |
 | `w` | Toggle HD web preview viewer in browser |
 | `i` | Install APK via Gradle (auto-detects build variants) |
 | `d` | Open device / emulator picker |
@@ -170,9 +178,13 @@ Press `s` to capture a screenshot of the selected preview. The screenshot is ren
 
 Running a preview with `Enter` also auto-captures a screenshot after a short delay.
 
-Press `f` to view the screenshot **fullscreen** using your terminal's native graphics protocol for pixel-perfect quality. Supported terminals: Kitty, iTerm2, WezTerm, Ghostty. Other terminals fall back to half-block rendering. Press any key to return to the TUI.
+Press `f` to enter **fullscreen HD mode** using your terminal's native graphics protocol for pixel-perfect quality. Use `↑/↓` to navigate between previews — cached screenshots display instantly, uncached ones are captured on the fly. Supported terminals: Kitty, iTerm2, WezTerm, Ghostty. Other terminals fall back to half-block rendering. Press any other key to return to the TUI.
 
 The `--screenshot` CLI command also displays the image inline using the native graphics protocol.
+
+### Crash detection
+
+When a preview crashes on the device, the error is automatically detected from logcat and displayed in the preview panel with the root cause exception and source location. This replaces the blank/broken screenshot you would otherwise see.
 
 ### HD Web Preview
 
@@ -215,7 +227,7 @@ debugImplementation("androidx.compose.ui:ui-tooling")
 1. **Discover** — Walks your Gradle project to find modules via `build.gradle.kts` files
 2. **Scan** — Parses `.kt` files for `@Preview` annotations using regex (fast, no compilation needed)
 3. **Resolve** — Extracts package name, JVM class name (`FileNameKt`), function name, and preview parameters
-4. **Launch** — Sends `adb shell am start` with the composable FQN to `PreviewActivity`
+4. **Launch** — Sends `adb shell am start -W` with the composable FQN to `PreviewActivity` (waits for Activity to be displayed)
 5. **Detect** — Auto-discovers the installed app package, trying all flavor variants
 
 Works with both pure Android and Kotlin Multiplatform (KMP) projects.
