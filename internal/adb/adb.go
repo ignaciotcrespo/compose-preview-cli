@@ -165,7 +165,7 @@ func LaunchPreview(serial, appPackage, composableFQN string, dismissDialog bool)
 	activity := appPackage + "/androidx.compose.ui.tooling.PreviewActivity"
 	args := []string{
 		"-s", serial,
-		"shell", "am", "start",
+		"shell", "am", "start", "-W",
 		"-n", activity,
 		"--es", "composable", composableFQN,
 	}
@@ -194,15 +194,16 @@ func LaunchPreview(serial, appPackage, composableFQN string, dismissDialog bool)
 	return nil
 }
 
-// CheckPreviewCrash clears logcat, waits for the given duration, then checks
-// if the app crashed. Returns the crash message if found, or empty string.
-func CheckPreviewCrash(serial, appPackage string, wait time.Duration) string {
-	// Clear logcat before waiting
+// ClearLogcat clears the logcat buffer.
+func ClearLogcat(serial string) {
 	exec.Command("adb", "-s", serial, "logcat", "-c").Run()
+}
 
-	time.Sleep(wait)
-
-	// Read logcat for crashes — filter by AndroidRuntime (crash tag) and the app package
+// CheckPreviewCrash reads logcat for crash info.
+// Returns the crash message if found, or empty string.
+// Call ClearLogcat before launching the preview, then call this after waiting.
+func CheckPreviewCrash(serial string) string {
+	// Read logcat for crashes — filter by AndroidRuntime (crash tag)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "logcat", "-d",

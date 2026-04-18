@@ -202,7 +202,7 @@ func NewModel(result scanner.ScanResult, projectRoot string, opts ...Options) Mo
 		opt = opts[0]
 	}
 	if opt.ScreenshotDelay == 0 {
-		opt.ScreenshotDelay = 3 * time.Second
+		opt.ScreenshotDelay = 1 * time.Second
 	}
 
 	m := Model{
@@ -638,6 +638,9 @@ func (m *Model) launchPreview() tea.Cmd {
 			}
 		}
 
+		// Clear logcat before launching so we can detect crashes afterwards
+		adb.ClearLogcat(serial)
+
 		// Try each installed variant until one works
 		var lastErr error
 		for _, pkg := range packages {
@@ -1004,9 +1007,13 @@ func (m *Model) delayedScreenshotCapture() tea.Cmd {
 	fqn := p.FQN
 	m.screenshotCache.SignalCapturing(fqn)
 
+	delay := m.screenshotDelay
 	return func() tea.Msg {
-		// Check for crashes while waiting for the preview to render
-		crash := adb.CheckPreviewCrash(serial, "", m.screenshotDelay)
+		// Wait for the preview to render (logcat was cleared before launch)
+		time.Sleep(delay)
+
+		// Check logcat for crashes (no extra wait, crash already happened if it will)
+		crash := adb.CheckPreviewCrash(serial)
 		if crash != "" {
 			return screenshotMsg{fqn: fqn, err: fmt.Errorf("%s", crash)}
 		}

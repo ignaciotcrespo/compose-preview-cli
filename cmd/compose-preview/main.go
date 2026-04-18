@@ -19,6 +19,7 @@ import (
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/server"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui"
 	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/imgrender"
+	"github.com/ignaciotcrespo/compose-preview-cli/internal/ui/screenshot"
 )
 
 // version is set by goreleaser via ldflags.
@@ -33,11 +34,12 @@ func main() {
 	// Check for flags
 	webMode := false
 	listMode := false
+	clearCache := false
 	dismissDialog := false
 	runPreview := ""
 	screenshotPreview := ""
 	screenshotOutput := "preview.png"
-	screenshotDelay := 3
+	screenshotDelay := 1
 	webPort := 9999
 	args := []string{}
 	for i := 1; i < len(os.Args); i++ {
@@ -63,6 +65,8 @@ func main() {
 				os.Exit(1)
 			}
 			screenshotDelay = d
+		} else if arg == "--clear" {
+			clearCache = true
 		} else if arg == "--dismiss-dialog" {
 			dismissDialog = true
 		} else if (arg == "--port" || arg == "-p") && i+1 < len(os.Args) {
@@ -99,6 +103,16 @@ func main() {
 
 	if webMode {
 		runWebMode(root, webPort)
+		return
+	}
+
+	if clearCache {
+		dir := screenshot.SharedDir
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error clearing cache: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Cleared screenshot cache: %s\n", dir)
 		return
 	}
 
