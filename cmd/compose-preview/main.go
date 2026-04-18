@@ -137,7 +137,16 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Found %d previews across %d modules\n", len(result.AllPreviews), len(result.Modules))
 
 	if len(result.AllPreviews) == 0 {
-		fmt.Fprintf(os.Stderr, "No @Preview composables found.\n")
+		totalComposables := 0
+		for _, mod := range result.Modules {
+			totalComposables += mod.ComposableCount
+		}
+		if totalComposables > 0 {
+			fmt.Fprintf(os.Stderr, "No @Preview composables found, but %d @Composable functions exist.\n", totalComposables)
+			fmt.Fprintf(os.Stderr, "Add @Preview annotations to enable preview browsing.\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "No @Preview or @Composable functions found.\n")
+		}
 		os.Exit(0)
 	}
 

@@ -88,7 +88,11 @@ func (m Model) renderModulesContent(maxLines int) panelContent {
 		if m.moduleHasScreenshots(mod) {
 			marker = screenshotMarkerStyle.Render(" ◉")
 		}
-		b.WriteString(cursor + style.Render(mod.Name) + countStyle.Render(count) + marker + "\n")
+		composableInfo := ""
+		if mod.ComposableCount > 0 {
+			composableInfo = fmt.Sprintf("\n   %d composables", mod.ComposableCount)
+		}
+		b.WriteString(cursor + style.Render(mod.Name) + countStyle.Render(count) + marker + composableInfo + "\n")
 	}
 	return panelContent{
 		content: b.String(),

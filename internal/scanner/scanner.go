@@ -26,8 +26,10 @@ func Scan(root string) ScanResult {
 
 	var allPreviews []PreviewFunc
 	for i := range modules {
-		modules[i].Previews = scanModule(modules[i].Path, modules[i].Name)
-		allPreviews = append(allPreviews, modules[i].Previews...)
+		previews, count := scanModule(modules[i].Path, modules[i].Name)
+		modules[i].Previews = previews
+		modules[i].ComposableCount = count
+		allPreviews = append(allPreviews, previews...)
 	}
 
 	return ScanResult{
@@ -79,13 +81,15 @@ func discoverModules(root string) []Module {
 }
 
 // scanModule scans all .kt files in a module's src directory for @Preview functions.
-func scanModule(modulePath, moduleName string) []PreviewFunc {
+// Returns previews found and total composable count.
+func scanModule(modulePath, moduleName string) ([]PreviewFunc, int) {
 	srcDir := filepath.Join(modulePath, "src")
 	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-		return nil
+		return nil, 0
 	}
 
 	var previews []PreviewFunc
+	composableCount := 0
 	filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
@@ -93,11 +97,12 @@ func scanModule(modulePath, moduleName string) []PreviewFunc {
 		if !strings.HasSuffix(path, ".kt") {
 			return nil
 		}
-		found := scanFile(path, moduleName)
+		found, count := scanFile(path, moduleName)
 		previews = append(previews, found...)
+		composableCount += count
 		return nil
 	})
-	return previews
+	return previews, composableCount
 }
 
 // jvmClassName returns the JVM class name for top-level functions in a Kotlin file.
@@ -109,22 +114,25 @@ func jvmClassName(filePath string) string {
 }
 
 // scanFile parses a single Kotlin file for @Preview annotated functions.
-func scanFile(path, moduleName string) []PreviewFunc {
+// Returns previews found and total @Composable function count.
+func scanFile(path, moduleName string) ([]PreviewFunc, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	defer f.Close()
 
 	className := jvmClassName(path)
 
 	var (
-		previews   []PreviewFunc
-		pkg        string
-		inPreview  bool
-		previewLine int
-		parenDepth int
-		annotationText strings.Builder
+		previews        []PreviewFunc
+		composableCount int
+		pkg             string
+		inPreview       bool
+		inComposable    bool
+		previewLine     int
+		parenDepth      int
+		annotationText  strings.Builder
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -164,14 +172,26 @@ func scanFile(path, moduleName string) []PreviewFunc {
 			continue
 		}
 
-		// Skip @Composable between @Preview and fun
-		if inPreview && composableRe.MatchString(line) {
-			continue
+		// Track @Composable annotations (for counting all composables)
+		if composableRe.MatchString(line) {
+			inComposable = true
+			if inPreview {
+				continue
+			}
+		}
+
+		// Count @Composable functions (with or without @Preview)
+		if !inPreview && inComposable {
+			if funRe.MatchString(line) {
+				composableCount++
+				inComposable = false
+			}
 		}
 
 		// Look for function declaration after @Preview
 		if inPreview {
 			if m := funRe.FindStringSubmatch(line); m != nil {
+				composableCount++ // previews are also composables
 				funcName := m[1]
 				// FQN uses JVM class name: package.FileNameKt.FunctionName
 				fqn := className + "." + funcName
@@ -208,7 +228,7 @@ func scanFile(path, moduleName string) []PreviewFunc {
 			}
 		}
 	}
-	return previews
+	return previews, composableCount
 }
 
 // parseParams extracts key=value pairs from an annotation string.

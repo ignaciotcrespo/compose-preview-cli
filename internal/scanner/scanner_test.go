@@ -21,7 +21,7 @@ fun MyButtonPreview() {
 }
 `), 0644)
 
-	previews := scanFile(kt, ":app")
+	previews, _ := scanFile(kt, ":app")
 	if len(previews) != 1 {
 		t.Fatalf("expected 1 preview, got %d", len(previews))
 	}
@@ -49,7 +49,7 @@ fun CardPreview() {
 }
 `), 0644)
 
-	previews := scanFile(kt, ":feature")
+	previews, _ := scanFile(kt, ":feature")
 	if len(previews) != 1 {
 		t.Fatalf("expected 1 preview, got %d", len(previews))
 	}
@@ -81,7 +81,7 @@ fun LargePreview() {
 }
 `), 0644)
 
-	previews := scanFile(kt, ":app")
+	previews, _ := scanFile(kt, ":app")
 	if len(previews) != 1 {
 		t.Fatalf("expected 1 preview, got %d", len(previews))
 	}
@@ -108,7 +108,7 @@ fun DarkPreview() {
 }
 `), 0644)
 
-	previews := scanFile(kt, ":app")
+	previews, _ := scanFile(kt, ":app")
 	if len(previews) != 2 {
 		t.Fatalf("expected 2 previews, got %d", len(previews))
 	}
@@ -130,7 +130,7 @@ fun SimplePreview() {
 }
 `), 0644)
 
-	previews := scanFile(kt, ":app")
+	previews, _ := scanFile(kt, ":app")
 	if len(previews) != 1 {
 		t.Fatalf("expected 1 preview, got %d", len(previews))
 	}
