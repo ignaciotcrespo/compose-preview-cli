@@ -197,7 +197,7 @@ func (m Model) renderHelp() string {
 	if m.webServer != nil {
 		webLabel = "w stop web"
 	}
-	parts := []string{"enter run", "s screenshot", "f fullscreen HD", webLabel, "i install", "/ filter", "d device", "q quit"}
+	parts := []string{"enter run", "s screenshot", "f fullscreen HD", webLabel, "i install", "/ filter", "d device", "x kill emu", "q quit"}
 	return helpStyle.Render(" " + strings.Join(parts, " · "))
 }
 

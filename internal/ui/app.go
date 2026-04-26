@@ -55,6 +55,12 @@ type emulatorReadyMsg struct {
 	device adb.Device
 }
 
+// emulatorKilledMsg is sent when an emulator has been killed.
+type emulatorKilledMsg struct {
+	serial string
+	err    error
+}
+
 // installTasksMsg is sent when gradle install task discovery completes.
 type installTasksMsg struct {
 	tasks []string
@@ -101,6 +107,10 @@ type Model struct {
 	devicePickerSel  int      // cursor in the picker
 	devicePickerItems []devicePickerItem // combined list of devices + AVDs
 	emulatorBooting  bool
+	emulatorFastMode bool // headless + Quick Boot
+	showKillPicker     bool                // kill emulator modal
+	killPickerSel      int                 // cursor in the kill picker
+	killPickerItems    []adb.RunningEmulator // running emulators
 
 	// Build status
 	statusMsg     string
@@ -222,6 +232,7 @@ func NewModel(result scanner.ScanResult, projectRoot string, opts ...Options) Mo
 		searchInput:      si,
 		avds:             avds,
 		showDevicePicker: showPicker,
+		emulatorFastMode: true,
 		panelRegions:     make(map[types.PanelID]panel.Region),
 	}
 	if showPicker {
@@ -329,6 +340,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMsg = ""
 		return m, nil
 
+	case emulatorKilledMsg:
+		if msg.err != nil {
+			m.errorMsg = fmt.Sprintf("Failed to kill emulator: %v", msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("Emulator %s killed", msg.serial)
+			// Remove killed device from list
+			var remaining []adb.Device
+			for _, d := range m.devices {
+				if d.Serial != msg.serial {
+					remaining = append(remaining, d)
+				}
+			}
+			m.devices = remaining
+			if len(m.devices) > 0 {
+				m.deviceStatus = m.devices[0].Model
+				if m.deviceStatus == "" {
+					m.deviceStatus = m.devices[0].Serial
+				}
+			} else {
+				m.deviceStatus = "no device"
+			}
+		}
+		return m, nil
+
 	case adbLaunchMsg:
 		if msg.err != nil {
 			m.errorMsg = fmt.Sprintf("Launch failed: %v", msg.err)
@@ -354,6 +389,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmd
 			}
+		}
+
+		// Kill emulator picker modal is active
+		if m.showKillPicker {
+			switch msg.String() {
+			case "up", "k":
+				if m.killPickerSel > 0 {
+					m.killPickerSel--
+				}
+				return m, nil
+			case "down", "j":
+				if m.killPickerSel < len(m.killPickerItems)-1 {
+					m.killPickerSel++
+				}
+				return m, nil
+			case "enter":
+				if m.killPickerSel < len(m.killPickerItems) {
+					emu := m.killPickerItems[m.killPickerSel]
+					m.showKillPicker = false
+					serial := emu.Serial
+					m.statusMsg = fmt.Sprintf("Killing emulator %s...", serial)
+					return m, func() tea.Msg {
+						err := adb.KillEmulator(serial)
+						return emulatorKilledMsg{serial: serial, err: err}
+					}
+				}
+				return m, nil
+			case "esc", "q":
+				m.showKillPicker = false
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
 		}
 
 		// Device picker modal is active
@@ -391,6 +460,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, m.launchEmulator(item.avdName)
 					}
 				}
+				return m, nil
+			case "f":
+				m.emulatorFastMode = !m.emulatorFastMode
 				return m, nil
 			case "esc", "q":
 				m.showDevicePicker = false
@@ -476,6 +548,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devicePickerItems = m.buildPickerItems()
 			m.devicePickerSel = 0
 			m.showDevicePicker = true
+			return m, nil
+		}
+
+		// "x" opens kill emulator picker
+		if key == "x" {
+			emulators, err := adb.ListRunningEmulators()
+			if err != nil || len(emulators) == 0 {
+				m.errorMsg = "No running emulators found"
+				return m, nil
+			}
+			m.killPickerItems = emulators
+			m.killPickerSel = 0
+			m.showKillPicker = true
 			return m, nil
 		}
 
@@ -1156,10 +1241,15 @@ func (m *Model) buildPickerItems() []devicePickerItem {
 
 // launchEmulator starts an emulator AVD asynchronously.
 func (m *Model) launchEmulator(avdName string) tea.Cmd {
-	m.statusMsg = fmt.Sprintf("Launching emulator %s...", avdName)
+	fastMode := m.emulatorFastMode
+	mode := ""
+	if fastMode {
+		mode = " (fast/headless)"
+	}
+	m.statusMsg = fmt.Sprintf("Launching emulator %s%s...", avdName, mode)
 	m.errorMsg = ""
 	return func() tea.Msg {
-		err := adb.StartEmulator(avdName)
+		err := adb.StartEmulator(avdName, fastMode)
 		return emulatorStartedMsg{avdName: avdName, err: err}
 	}
 }

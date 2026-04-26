@@ -152,6 +152,12 @@ func (m Model) View() string {
 		layout = m.overlayModal(layout, modal)
 	}
 
+	// Overlay kill emulator picker modal if active
+	if m.showKillPicker {
+		modal := m.renderKillPickerModal()
+		layout = m.overlayModal(layout, modal)
+	}
+
 	return layout
 }
 
@@ -187,6 +193,17 @@ func (m Model) renderDevicePickerModal() string {
 		lines = append(lines, statusBarStyle.Render("  No devices or emulators found"))
 	}
 
+	// Show fast mode toggle if there are AVDs
+	if hasAVDs {
+		lines = append(lines, "")
+		fastStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+		fastLabel := "[ ] Fast mode (headless, Quick Boot)"
+		if m.emulatorFastMode {
+			fastLabel = "[✓] Fast mode (headless, Quick Boot)"
+		}
+		lines = append(lines, fastStyle.Render("  "+fastLabel))
+	}
+
 	content := ""
 	for _, l := range lines {
 		content += l + "\n"
@@ -204,7 +221,7 @@ func (m Model) renderDevicePickerModal() string {
 	}
 
 	modalH := len(lines)
-	help := helpStyle.Render(" ↑↓ navigate · enter select · esc cancel")
+	help := helpStyle.Render(" ↑↓ navigate · enter select · f fast mode · esc cancel")
 
 	return panel.Box(0, "Select Device / Emulator", content+help, modalW, modalH+1, true,
 		panel.BoxOpts{Accent: selectedAccent})
@@ -248,6 +265,47 @@ func (m Model) renderInstallPickerModal() string {
 	help := helpStyle.Render(" ↑↓ navigate · enter select · esc cancel")
 
 	return panel.Box(0, "Select Install Task", content+help, modalW, modalH+1, true,
+		panel.BoxOpts{Accent: selectedAccent})
+}
+
+// renderKillPickerModal renders the kill emulator selection modal.
+func (m Model) renderKillPickerModal() string {
+	var lines []string
+
+	for i, emu := range m.killPickerItems {
+		cursor := "  "
+		style := normalItemStyle
+		if i == m.killPickerSel {
+			cursor = "▸ "
+			style = selectedItemStyle
+		}
+		label := emu.Serial
+		if emu.AVD != "" {
+			label = fmt.Sprintf("%s (%s)", emu.AVD, emu.Serial)
+		}
+		lines = append(lines, cursor+style.Render(label))
+	}
+
+	content := ""
+	for _, l := range lines {
+		content += l + "\n"
+	}
+
+	modalW := 40
+	for _, emu := range m.killPickerItems {
+		w := len(emu.Serial) + len(emu.AVD) + 7
+		if w > modalW {
+			modalW = w
+		}
+	}
+	if modalW > m.width-4 {
+		modalW = m.width - 4
+	}
+
+	modalH := len(lines)
+	help := helpStyle.Render(" ↑↓ navigate · enter kill · esc cancel")
+
+	return panel.Box(0, "Kill Emulator", content+help, modalW, modalH+1, true,
 		panel.BoxOpts{Accent: selectedAccent})
 }
 
