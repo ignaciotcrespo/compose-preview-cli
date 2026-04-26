@@ -35,7 +35,7 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 │ Params: showBackground=true, backgroundColor=0xFF111111                            │
 ╰─────────────────────────────────────────────────────────────────────────────────────╯
  ● Launched: LoginScreenEmptyDarkPreview (com.example.app.dev)
- enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · q quit
+ enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · x kill emu · q quit
 ```
 
 ## What it does
@@ -49,7 +49,8 @@ You want to check a Compose preview. You open Android Studio. You wait 2 minutes
 - **Crash detection** — Automatically detects when a preview crashes and shows the root cause error in the preview panel
 - **HD Web Preview** — Press `w` to open a local web viewer in your browser with full-quality preview rendering
 - **Install** — Trigger Gradle install tasks (`i`) with automatic variant detection (dev, qa, accept, production)
-- **Device / Emulator picker** — Press `d` to select a connected device or launch an AVD emulator
+- **Device / Emulator picker** — Press `d` to select a connected device or launch an AVD emulator, with optional fast mode (headless + Quick Boot)
+- **Kill emulator** — Press `x` to list running emulators and kill one (useful for headless emulators)
 - **Details** — See fully qualified name, file path, line number, and `@Preview` parameters
 - **Composable count** — Shows total `@Composable` functions per module, helping identify preview coverage gaps
 - **Stale detection** — Warns when source files are newer than the installed APK
@@ -130,7 +131,7 @@ compose-preview --dismiss-dialog
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ ⚠ sources changed since last build — press 'i' to install                  │  status
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · q quit │  help
+│ enter run · s screenshot · f fullscreen · w web · i install · / filter · d device · x kill emu · q quit │  help
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -147,7 +148,8 @@ compose-preview --dismiss-dialog
 | `f` | Fullscreen HD preview with native terminal graphics — `↑/↓` to navigate between previews |
 | `w` | Toggle HD web preview viewer in browser |
 | `i` | Install APK via Gradle (auto-detects build variants) |
-| `d` | Open device / emulator picker |
+| `d` | Open device / emulator picker (press `f` in picker to toggle fast mode) |
+| `x` | Open kill emulator picker — select a running emulator to stop it |
 | `R` | Refresh project scan |
 | `1` / `2` | Focus Modules / Previews panel directly |
 | `q` | Quit |
@@ -193,6 +195,20 @@ The terminal screenshot is low resolution. For full-quality rendering, press `w`
 ### Device / Emulator picker
 
 Press `d` to open a modal listing connected devices and available AVD emulators. Select a device to target, or pick an emulator to launch it.
+
+Press `f` inside the picker to toggle **fast mode** — launches the emulator headless (no window, no audio) with Quick Boot snapshots and host GPU acceleration. This is significantly faster than a cold boot and ideal for CI or when you don't need the emulator UI.
+
+### Kill emulator
+
+Press `x` to open a modal listing all running emulators. Select one and press `Enter` to kill it. This is especially useful for headless emulators launched in fast mode, which have no window to close.
+
+```
+╭ Kill Emulator ───────────────────────╮
+│ ▸ Pixel_6_API_34 (emulator-5554)     │
+│   Pixel_7_API_35 (emulator-5556)     │
+│ ↑↓ navigate · enter kill · esc cancel│
+╰──────────────────────────────────────╯
+```
 
 ### Install variants
 

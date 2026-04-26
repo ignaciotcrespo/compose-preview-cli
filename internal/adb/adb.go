@@ -101,12 +101,20 @@ func ListAVDs() []AVD {
 
 // StartEmulator launches an emulator AVD in the background.
 // Returns immediately — the emulator boots asynchronously.
-func StartEmulator(avdName string) error {
+// If fastMode is true, runs headless with Quick Boot and host GPU for faster startup.
+func StartEmulator(avdName string, fastMode bool) error {
 	emulator, err := findEmulator()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(emulator, "-avd", avdName, "-no-snapshot-load")
+	args := []string{"-avd", avdName}
+	if fastMode {
+		// Headless: no window, no audio, use host GPU acceleration, Quick Boot (snapshot) enabled
+		args = append(args, "-no-window", "-no-audio", "-gpu", "auto")
+	} else {
+		args = append(args, "-no-snapshot-load")
+	}
+	cmd := exec.Command(emulator, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Start()
@@ -129,6 +137,60 @@ func findEmulator() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("emulator not found — set ANDROID_HOME or add emulator to PATH")
+}
+
+// RunningEmulator represents a currently running emulator instance.
+type RunningEmulator struct {
+	Serial string // e.g. "emulator-5554"
+	AVD    string // AVD name if available
+}
+
+// ListRunningEmulators returns emulator devices that are currently running.
+func ListRunningEmulators() ([]RunningEmulator, error) {
+	devices, err := DetectDevices()
+	if err != nil {
+		return nil, err
+	}
+	var emulators []RunningEmulator
+	for _, d := range devices {
+		if !strings.HasPrefix(d.Serial, "emulator-") {
+			continue
+		}
+		if d.State != "device" {
+			continue
+		}
+		avdName := getEmulatorAVDName(d.Serial)
+		emulators = append(emulators, RunningEmulator{
+			Serial: d.Serial,
+			AVD:    avdName,
+		})
+	}
+	return emulators, nil
+}
+
+// getEmulatorAVDName queries the emulator for its AVD name via adb.
+func getEmulatorAVDName(serial string) string {
+	out, err := exec.Command("adb", "-s", serial, "emu", "avd", "name").Output()
+	if err != nil {
+		return ""
+	}
+	// First line is the AVD name
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && line != "OK" {
+			return line
+		}
+	}
+	return ""
+}
+
+// KillEmulator kills a running emulator by serial.
+func KillEmulator(serial string) error {
+	out, err := exec.Command("adb", "-s", serial, "emu", "kill").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kill emulator %s: %s", serial, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // WaitForDevice waits for a device to come online (up to timeout).
